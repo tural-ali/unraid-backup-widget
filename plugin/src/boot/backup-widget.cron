@@ -1,0 +1,14 @@
+# backup-widget data collectors.
+#
+# Three tiers, because they cost very different amounts:
+#   1m   local log parsing only - no cloud calls, no filesystem walks
+#   5m   one Dropbox listing call, for byte-accurate mirror progress
+#   6h   all three clouds plus a du over every dataset
+#
+# Per-second figures do NOT come from cron: the page queries rclone's rc server
+# directly, in-process, which is the only way to move like a CPU graph.
+* * * * * bash /boot/config/plugins/backup-widget/scripts/duplicacy-status.sh >/dev/null 2>&1
+* * * * * bash /boot/config/plugins/backup-widget/scripts/rclone-live.sh >/dev/null 2>&1
+*/5 * * * * bash /boot/config/plugins/backup-widget/scripts/rclone-progress.sh >/dev/null 2>&1
+5 */6 * * * bash /boot/config/plugins/backup-widget/scripts/duplicacy-coverage.sh >/dev/null 2>&1
+7 */6 * * * bash /boot/config/plugins/backup-widget/scripts/backup-inventory.sh >/dev/null 2>&1

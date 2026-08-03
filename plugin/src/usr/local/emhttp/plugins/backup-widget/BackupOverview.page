@@ -1,0 +1,229 @@
+Menu="Tools"
+Title="Backup Overview"
+Icon="cloud"
+---
+<?PHP
+/* Backup overview page.
+ *
+ * All rendering lives in overview.php, shared with the two poll endpoints, so
+ * the first paint and every update come from one code path.
+ *
+ * Refresh model, and why it is split in two:
+ *   every 1s   overview-live.php  - a few hundred bytes of numbers from rclone's
+ *                                   rc server, patched into the DOM in place.
+ *                                   This is what makes it move like the CPU
+ *                                   graph rather than reloading.
+ *   every 30s  overview-poll.php  - the whole panel. Coverage, sizes and
+ *                                   snapshot times come from 6-hourly cron
+ *                                   files, so re-rendering the table every
+ *                                   second would be churn for no new data.
+ *
+ * The fast tick patches text nodes only. Rebuilding the panel at 1Hz would fight
+ * the browser for layout and dismiss any tooltip the instant it was hovered.
+ */
+require_once '/usr/local/emhttp/plugins/backup-widget/overview.php';
+?>
+<style>
+:root {
+  --bo-bg:      #fff;
+  --bo-bg-alt:  #f8fafc;
+  --bo-border:  #e2e8f0;
+  --bo-fg:      #1e293b;
+  --bo-fg-dim:  #64748b;
+  --bo-fg-faint:#94a3b8;
+  --bo-shadow:  0 1px 2px rgba(15,23,42,.06);
+}
+/* Unraid ships both a white and a black theme; follow whichever is active
+   instead of hard-coding light, or half the themes get white-on-white. */
+body.black, .black {
+  --bo-bg:      #1c1c1c;
+  --bo-bg-alt:  #232323;
+  --bo-border:  #3a3a3a;
+  --bo-fg:      #e5e7eb;
+  --bo-fg-dim:  #a1a1aa;
+  --bo-fg-faint:#71717a;
+  --bo-shadow:  none;
+}
+.bo-wrap { font-size:13px; color:var(--bo-fg); max-width:1500px; }
+.bo-wrap svg { display:inline-block; vertical-align:-2px; flex:none; }
+
+.bo-head { display:flex; align-items:center; gap:12px; margin-bottom:6px; }
+.bo-brandmark { width:42px; height:42px; border-radius:11px; background:#2563eb1a;
+  display:flex; align-items:center; justify-content:center; }
+.bo-titles { line-height:1.25; }
+.bo-title { font-size:21px; font-weight:700; letter-spacing:-.02em; }
+.bo-sub { font-size:12px; color:var(--bo-fg-dim); }
+.bo-head-actions { margin-left:auto; display:flex; gap:8px; }
+.bo-btn { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600;
+  padding:8px 13px; border-radius:9px; border:1px solid var(--bo-border);
+  background:var(--bo-bg); color:var(--bo-fg); cursor:pointer; box-shadow:var(--bo-shadow); }
+.bo-btn:hover { background:var(--bo-bg-alt); }
+.bo-pill { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600;
+  padding:7px 13px; border-radius:999px; }
+.bo-pill-warn { background:#d977061a; color:#b45309; }
+.bo-pill-ok   { background:#16a34a1a; color:#15803d; }
+.bo-lastok { font-size:12px; color:var(--bo-fg-dim); margin:0 0 14px 2px; }
+.bo-ok-tick svg { vertical-align:-3px; }
+
+.bo-cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; }
+.bo-card { display:flex; align-items:center; gap:13px; padding:15px;
+  border:1px solid var(--bo-border); border-radius:13px; background:var(--bo-bg);
+  box-shadow:var(--bo-shadow); }
+.bo-card-ico { width:42px; height:42px; border-radius:50%; display:flex;
+  align-items:center; justify-content:center; flex:none; }
+.bo-card-n { font-size:23px; font-weight:700; line-height:1.1; letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums; }
+.bo-card-u { font-size:12px; font-weight:600; margin-left:2px; }
+.bo-card-l { font-size:12px; font-weight:600; }
+.bo-card-s { font-size:11px; color:var(--bo-fg-faint); }
+
+.bo-act { display:flex; align-items:center; gap:16px; margin-top:12px; padding:14px 16px;
+  border:1px solid var(--bo-border); border-radius:13px; background:var(--bo-bg);
+  box-shadow:var(--bo-shadow); }
+.bo-act-ico { width:40px; height:40px; border-radius:11px; background:#2563eb14;
+  display:flex; align-items:center; justify-content:center; flex:none; }
+.bo-act-idle .bo-act-ico { background:#16a34a14; }
+.bo-act-txt { flex:none; min-width:190px; }
+.bo-act-t { font-size:13px; font-weight:700; }
+.bo-act-s { font-size:12px; color:var(--bo-fg-dim); }
+.bo-tool { color:var(--bo-fg-faint); font-weight:500; }
+.bo-act-bar { flex:1 1 auto; min-width:120px; }
+.bo-bar { position:relative; height:22px; border-radius:7px; background:var(--bo-bg-alt);
+  border:1px solid var(--bo-border); overflow:hidden; }
+.bo-bar-fill { height:100%; background:linear-gradient(90deg,#3b82f6,#2563eb);
+  transition:width .9s linear; }
+.bo-bar-lbl { position:absolute; inset:0; display:flex; align-items:center;
+  justify-content:center; font-size:11px; font-weight:700; color:#fff;
+  text-shadow:0 1px 2px rgba(0,0,0,.45); font-variant-numeric:tabular-nums; }
+.bo-act-files { font-size:10.5px; color:var(--bo-fg-faint); margin-top:4px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-variant-numeric:tabular-nums; }
+.bo-act-stats { display:flex; gap:18px; flex:none; font-size:12px; color:var(--bo-fg-dim);
+  font-variant-numeric:tabular-nums; }
+.bo-act-stats span { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
+.bo-spin svg { animation:bo-rot 2.4s linear infinite; }
+@keyframes bo-rot { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce) {
+  .bo-spin svg { animation:none; }
+  .bo-bar-fill { transition:none; }
+}
+
+.bo-table { margin-top:14px; border:1px solid var(--bo-border); border-radius:13px;
+  overflow:hidden; background:var(--bo-bg); box-shadow:var(--bo-shadow); }
+/* Every column is a fixed pixel width - none of them flex.
+   With fr units the columns were sized by their content, so a cell changing from
+   "8h ago" to "just now", or "Not a target" to "Missing", resized the column and
+   shifted every row: visible jitter on a panel that repaints every 30s. Even the
+   dataset column is fixed, because "Raw Photos" and "Paperless" are different
+   widths and a content-sized first column moves everything to its right.
+
+   The trailing 1fr is an empty spacer, so leftover width on a wide screen pools
+   there instead of being distributed back into the real columns. */
+.bo-tr { display:grid;
+  grid-template-columns:200px 148px 158px 148px 116px 132px 88px 1fr;
+  align-items:center; gap:10px; padding:11px 16px; border-top:1px solid var(--bo-border);
+  min-height:52px; }
+.bo-tr:first-child { border-top:0; }
+.bo-th { background:var(--bo-bg-alt); font-size:11px; font-weight:700;
+  color:var(--bo-fg-dim); align-items:end; }
+.bo-th > div { display:flex; flex-direction:column; align-items:flex-start; gap:1px;
+  min-width:0; }
+.bo-hcol { display:flex; align-items:center; gap:6px; white-space:nowrap; }
+.bo-tool2 { font-size:9px; font-weight:600; color:var(--bo-fg-faint); }
+.bo-ds { display:flex; align-items:center; gap:10px; font-size:13px; min-width:0; }
+.bo-ds b { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.bo-ds-ico { width:27px; height:27px; border-radius:8px; display:flex;
+  align-items:center; justify-content:center; flex:none; }
+.bo-cell { display:flex; align-items:center; gap:6px; font-size:12px; white-space:nowrap;
+  min-width:0; overflow:hidden; }
+/* The table is the one thing that must not squash: below its natural width let
+   the container scroll rather than let columns collapse into each other. */
+.bo-table-scroll { overflow-x:auto; }
+.bo-table { min-width:1010px; }
+.bo-size { font-variant-numeric:tabular-nums; font-weight:600; }
+.bo-prot { display:flex; flex-direction:column; gap:5px; }
+.bo-prot-b { font-size:11px; font-weight:700; padding:2px 8px; border-radius:6px;
+  align-self:flex-start; font-variant-numeric:tabular-nums; }
+.bo-prot-bar { display:block; height:3px; border-radius:2px; background:var(--bo-border);
+  overflow:hidden; max-width:78px; }
+.bo-prot-bar i { display:block; height:100%; }
+
+.bo-attn { margin-top:14px; padding:15px 17px; border:1px solid #f5d0a9;
+  border-radius:13px; background:#fffaf3; }
+.black .bo-attn { background:#2a2115; border-color:#6b4f22; }
+.bo-attn-h { display:flex; align-items:center; gap:8px; font-size:13px; font-weight:700;
+  color:#b45309; margin-bottom:9px; }
+.black .bo-attn-h { color:#f0b45f; }
+.bo-attn-g { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:6px 22px; }
+.bo-attn-i { display:flex; align-items:baseline; gap:8px; font-size:12px; }
+.bo-attn-i i { width:5px; height:5px; border-radius:50%; background:#d97706; flex:none;
+  position:relative; top:-2px; }
+.bo-allok { margin-top:14px; padding:13px 17px; border:1px solid #bbf7d0;
+  border-radius:13px; background:#f2fdf5; font-size:12.5px; font-weight:600; color:#15803d;
+  display:flex; align-items:center; gap:8px; }
+.black .bo-allok { background:#132a1b; border-color:#2a6b3d; color:#68d391; }
+
+.bo-foot { display:flex; justify-content:space-between; align-items:center; gap:12px;
+  margin-top:12px; padding-top:11px; border-top:1px solid var(--bo-border);
+  font-size:11px; color:var(--bo-fg-faint); }
+.bo-foot span { display:inline-flex; align-items:center; gap:6px; }
+</style>
+
+<div id="bo-panel"><?= bo_render() ?></div>
+
+<script>
+/* Fast tick: numbers only, patched via textContent. Slow tick: rebuild the panel.
+   Both endpoints sit under /plugins/, so they are behind emhttp session auth. */
+var boFast = 1000, boSlow = 30, boCount = boSlow, boBusy = false;
+
+function boSet(id, val) {
+  var e = document.getElementById(id);
+  if (e && val !== undefined && val !== null && e.textContent !== String(val)) {
+    e.textContent = val;
+  }
+}
+
+function boLive() {
+  fetch('/plugins/backup-widget/overview-live.php', {cache: 'no-store'})
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d || !d.running) { return; }
+      var bar = document.getElementById('bo-bar');
+      if (bar) { bar.style.width = (d.pct || 0) + '%'; }
+      boSet('bo-pct',      Math.round(d.pct || 0) + '%');
+      boSet('bo-bytes',    d.bytes || '');
+      boSet('bo-rate',     d.rate || '');
+      boSet('bo-eta',      d.eta || '?');
+      boSet('bo-act-name', d.name || '');
+      boSet('bo-inflight', d.inflight || '');
+    })
+    .catch(function () { /* a dropped tick is not worth surfacing; the next is 1s away */ });
+}
+
+function boRefresh() {
+  if (boBusy) { return; }
+  boBusy = true;
+  fetch('/plugins/backup-widget/overview-poll.php', {cache: 'no-store'})
+    .then(function (r) { return r.text(); })
+    .then(function (html) {
+      /* DOMParser + replaceChildren rather than assigning markup to an HTML
+         sink: the payload is our own authenticated endpoint, but parsing it as
+         an inert document and moving nodes keeps the page free of any
+         markup-injection path. */
+      var doc = new DOMParser().parseFromString(html, 'text/html');
+      var next = doc.querySelector('.bo-wrap');
+      var host = document.getElementById('bo-panel');
+      if (next && host) { host.replaceChildren(document.importNode(next, true)); }
+      boCount = boSlow;
+    })
+    .catch(function () {})
+    .then(function () { boBusy = false; });
+}
+
+setInterval(boLive, boFast);
+setInterval(function () {
+  boCount--;
+  var c = document.getElementById('bo-count');
+  if (c) { c.textContent = boCount > 0 ? boCount : 0; }
+  if (boCount <= 0) { boRefresh(); }
+}, 1000);
+</script>

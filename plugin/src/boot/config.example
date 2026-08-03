@@ -1,0 +1,28 @@
+# backup-widget configuration
+#
+# Copy to /boot/config/plugins/backup-widget/config and edit. Every value below
+# is a default that matches the layout this plugin was written against; the
+# scripts run unchanged if you leave the file absent.
+#
+# The plugin only ever READS from these locations. It does not run backups - it
+# reports on backups run by Duplicacy and rclone, which stay under your control.
+
+# Duplicacy install: expects bin/duplicacy, secret.env, tokens/, logs/, prefs/
+DUP_DIR=/mnt/user/appdata/duplicacy
+
+# rclone install: expects bin/rclone, config/rclone.conf, logs/, config/rc.secret
+RCLONE_DIR=/mnt/user/appdata/rclone
+
+# Datasets to report on, in display order. Each must be a share under /mnt/user.
+BW_SHARES="raw-photos videos paperless immich appdata"
+
+# repo:duplicacy-storages. A cloud absent here is treated as "not a target",
+# rendered grey, and never counted as a gap.
+BW_SETS="raw-photos:gdrive,mailru videos:gdrive paperless:gdrive,mailru appdata:gdrive,mailru immich:gdrive"
+
+# Shares the rclone mirror covers. Must match SHARES in your sync script.
+BW_MIRRORED="videos raw-photos"
+
+# rclone rc endpoint, used for per-second transfer stats.
+BW_RC_ADDR=127.0.0.1:5572
+BW_RC_USER=dash

@@ -1,0 +1,142 @@
+Menu="Dashboard:0"
+Cond="version_compare(parse_ini_file('/etc/unraid-version')['version'],'6.11.9','>')"
+---
+<?PHP
+/* Backup status tile for the Unraid dashboard.
+ *
+ * Rendering lives in overview-widget.php, which shares bo_state() with the full
+ * Tools > Backup Overview page, so the tile and the page cannot disagree.
+ *
+ * REGISTRATION CONTRACT - this is not free-form. Unraid 7.x expects
+ *   $mytiles[$plugin]['columnN'] = "<tbody>...<tr><td>...</td></tr></tbody>"
+ * with columnN being column1, column2 or column3 (this tile uses column2).
+ * and the tile must BE a tbody, because it is spliced into the dashboard's own
+ * table. Returning an array of name/title/body instead registers nothing and the
+ * tile silently does not appear - which is exactly what happened on 2026-08-03.
+ *
+ * IMPORTANT: every .page file is included into the SAME variable scope as
+ * Unraid's own dashboard code (DashStats.page reads `global $mytiles`).
+ * Declaring ordinary names like $i, $c, $d or $row at top level clobbers
+ * Unraid's variables and blanks the whole dashboard - that happened on
+ * 2026-07-28. So the only globals touched here are $mytiles and
+ * $backup_widget_plugin, and all logic sits behind functions.
+ *
+ * The inline script and style contain no "<", "&" or ">" characters, so the
+ * emitted fragment stays well-formed markup - the deploy check parses it as XML.
+ * That rules out "&&" (use nested ifs) and CSS child selectors like "a > b"
+ * (give the element a class instead).
+ *
+ * Live updates: a 1s tick patches the transfer figures from rclone's rc server,
+ * a 30s tick rebuilds the body for the slower coverage data. The tile is only in
+ * the DOM while the dashboard is open, so both are cheap.
+ */
+require_once '/usr/local/emhttp/plugins/backup-widget/overview-widget.php';
+
+if (!function_exists('backup_widget_render_tile')) {
+  function backup_widget_render_tile() {
+    $css = "<style>"
+      . ".bw { font-size:11.5px; line-height:1.45; }"
+      . ".bw svg { display:inline-block; vertical-align:-2px; flex:none; }"
+      . ".bw-head { display:flex; align-items:center; gap:11px; }"
+      . ".bw-gauge { text-align:center; flex:none; }"
+      . ".bw-gauge-l { font-size:8.5px; opacity:.55; margin-top:1px; letter-spacing:.02em; }"
+      . ".bw-headtxt { min-width:0; }"
+      . ".bw-headline { font-size:12.5px; margin-bottom:1px; }"
+      . ".bw-sub { font-size:10.5px; opacity:.65; }"
+      . ".bw-act { margin-top:8px; padding-top:7px; border-top:1px solid #dcdcdc; }"
+      . ".bw-act-l { font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }"
+      . ".bw-tool { opacity:.5; }"
+      . ".bw-bar { position:relative; display:flex; align-items:center; height:16px;"
+      . " border-radius:4px; background:#e2e8f0; overflow:hidden; margin:5px 0 4px; }"
+      . ".bw-bar-f { height:100%; background:#2563eb; transition:width .9s linear;"
+      . " display:flex; align-items:center; justify-content:flex-end; }"
+      . ".bw-pct-in { font-size:10px; font-weight:700; color:#fff; padding-right:5px;"
+      . " font-variant-numeric:tabular-nums; }"
+      . ".bw-pct-out { font-size:10px; font-weight:700; color:#475569; padding-left:5px;"
+      . " font-variant-numeric:tabular-nums; }"
+      . ".bw-act-s { display:grid; grid-template-columns:1.35fr 1fr 1fr; font-size:10px;"
+      . " opacity:.75; font-variant-numeric:tabular-nums; }"
+      . ".bw-act-s span:nth-child(2) { text-align:center; }"
+      . ".bw-act-s span:nth-child(3) { text-align:right; }"
+      . ".bw-idle { margin-top:8px; padding-top:7px; border-top:1px solid #dcdcdc; font-size:11px; opacity:.6; }"
+      . ".bw-grid { margin-top:8px; padding-top:6px; border-top:1px solid #dcdcdc; }"
+      . ".bw-gr { display:grid; grid-template-columns:1fr 34px 34px 34px; align-items:center;"
+      . " gap:2px; min-height:20px; }"
+      . ".bw-gh { padding-bottom:3px; }"
+      . ".bw-row { cursor:pointer; border-radius:3px; }"
+      . ".bw-row:hover { background:rgba(37,99,235,.06); }"
+      . ".bw-mk { text-align:center; display:flex; flex-direction:column; align-items:center; gap:1px; }"
+      . ".bw-cl { font-size:8px; opacity:.5; letter-spacing:.01em; }"
+      . ".bw-ds { display:flex; align-items:center; gap:5px; min-width:0; }"
+      . ".bw-dsn { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }"
+      . ".bw-det { display:none; padding:3px 0 5px 18px; }"
+      . ".bw-detr { display:flex; justify-content:space-between; gap:8px; font-size:9.5px;"
+      . " opacity:.8; line-height:1.6; }"
+      . ".bw-detp { opacity:.5; border-top:1px dotted #dcdcdc; margin-top:2px; padding-top:2px; }"
+      . ".bw-foot { margin-top:7px; font-size:9.5px; opacity:.5; }"
+      . "</style>";
+
+    /* No "and-and", no angle brackets: see the header comment. jQuery is already
+       loaded by the dashboard. The 30s tick parses the response as an inert
+       document and moves the nodes in, rather than assigning markup to an HTML
+       sink. */
+    $poll = "<script>"
+      /* Global, and outside the once-guard: the row markup references it via an
+         onclick attribute, and the guard below returns early on any re-entry. */
+      . "window.bwToggle = function(id){"
+      . "  var e = document.getElementById(id);"
+      . "  if (!e) { return; }"
+      . "  if (e.style.display === 'block') { e.style.display = 'none'; return; }"
+      . "  e.style.display = 'block';"
+      . "};"
+      . "(function(){"
+      . "if (window.bwPoll) { return; }"
+      . "function bwSet(id, v){"
+      . "  if (v === undefined) { return; }"
+      . "  if (v === null) { return; }"
+      . "  var e = document.getElementById(id);"
+      . "  if (!e) { return; }"
+      . "  if (e.textContent !== String(v)) { e.textContent = v; }"
+      . "}"
+      . "function bwLive(){"
+      . "  if (!document.getElementById('bw-body')) { return; }"
+      . "  jQuery.getJSON('/plugins/backup-widget/overview-live.php', function(d){"
+      . "    if (!d) { return; }"
+      . "    if (!d.running) { return; }"
+      . "    var b = document.getElementById('bw-bar');"
+      . "    if (b) { b.style.width = (d.pct || 0) + '%'; }"
+      . "    var p = Math.round(d.pct || 0);"
+      . "    if (p >= 14) { bwSet('bw-pct', p + '%'); bwSet('bw-pct-out', ''); }"
+      . "    if (p < 14) { bwSet('bw-pct', ''); bwSet('bw-pct-out', p + '%'); }"
+      . "    bwSet('bw-bytes', d.bytes);"
+      . "    bwSet('bw-rate', d.rate);"
+      . "    bwSet('bw-eta', d.eta || '?');"
+      . "    bwSet('bw-name', d.name);"
+      . "  });"
+      . "}"
+      . "function bwFull(){"
+      . "  var host = document.getElementById('bw-body');"
+      . "  if (!host) { return; }"
+      . "  jQuery.get('/plugins/backup-widget/widget-poll.php', function(h){"
+      . "    var doc = new DOMParser().parseFromString(h, 'text/html');"
+      . "    var next = doc.querySelector('.bw');"
+      . "    if (!next) { return; }"
+      . "    host.replaceChildren(document.importNode(next, true));"
+      . "  });"
+      . "}"
+      . "window.bwPoll = setInterval(bwLive, 1000);"
+      . "window.bwPollFull = setInterval(bwFull, 30000);"
+      . "})();"
+      . "</script>";
+
+    return "<tbody title='Backup coverage across Google Drive, Dropbox and mail.ru'>"
+      . "<tr><td><i class='fa fa-cloud-upload' style='margin-right:6px'></i>Backup "
+      . "<span id='bw-state'>" . bo_widget_header() . "</span></td></tr>"
+      . "<tr><td>" . $css . "<div id='bw-body'>" . bo_render_widget() . "</div>" . $poll . "</td></tr>"
+      . "</tbody>";
+  }
+}
+
+$backup_widget_plugin = 'backup-widget';
+$mytiles[$backup_widget_plugin]['column2'] = backup_widget_render_tile();
+?>

@@ -1,0 +1,679 @@
+<?PHP
+/* Backup overview page - full-width status panel for the whole backup estate.
+ *
+ * Rendering lives here and is shared with overview-poll.php, which serves the
+ * 60s refresh, so the first paint and every update come from one code path and
+ * cannot drift.
+ *
+ * Every figure is read from a cached ini written by cron. Nothing here shells
+ * out, walks the filesystem or calls a cloud: the page must render in
+ * milliseconds and must not hammer Dropbox each time a browser tab is open.
+ *
+ *   backup-inventory.ini      6h   per-dataset bytes and file counts (local du)
+ *   duplicacy-coverage.ini    6h   newest snapshot per repo per storage
+ *   duplicacy.ini             1m   live Duplicacy progress, parsed from its log
+ *   rclone-dropbox.ini        -    written by the sync script itself
+ *   rclone-dropbox-live.ini   1m   files copied, from the local sync log
+ *   rclone-progress.ini       5m   real bytes/rate/ETA, measured against Dropbox
+ *
+ * Two tools, two kinds of copy, and the page keeps them distinct: Duplicacy
+ * writes versioned encrypted chunks to Google Drive and mail.ru; rclone mirrors
+ * plain files to Dropbox. They fail differently and restore differently, so a
+ * green cell means different things and says which tool produced it.
+ */
+
+if (!function_exists('bo_ini')) {
+  function bo_ini($path) {
+    $p = @parse_ini_file($path);
+    return is_array($p) ? $p : [];
+  }
+}
+
+if (!function_exists('bo_bytes')) {
+  /* Decimal units, matching how cloud providers quote quota - Dropbox's "3 TB"
+     is 3.002 TiB, and showing TiB here would make every figure disagree with
+     the provider's own dashboard. */
+  function bo_bytes($b) {
+    $b = (float)$b;
+    if ($b <= 0) return '0 B';
+    $u = ['B','KB','MB','GB','TB','PB'];
+    $i = (int)floor(log($b, 1000));
+    if ($i < 0) $i = 0;
+    if ($i > 5) $i = 5;
+    $v = $b / pow(1000, $i);
+    $d = ($i >= 3 && $v < 10) ? 2 : ($i >= 2 ? ($v < 100 ? 1 : 0) : 0);
+    return number_format($v, $d) . ' ' . $u[$i];
+  }
+}
+
+if (!function_exists('bo_rate')) {
+  function bo_rate($bps) {
+    $bps = (float)$bps;
+    if ($bps <= 0) return '';
+    return bo_bytes($bps) . '/s';
+  }
+}
+
+if (!function_exists('bo_parse_stamp')) {
+  /* Coverage stores "DD/MM HH:MM" with no year, so infer it: anything that
+     lands in the future belongs to last year. Without this, a backup taken on
+     31/12 reads as eleven months in the future every January. */
+  function bo_parse_stamp($s) {
+    if (!preg_match('~^([0-9]{2})/([0-9]{2}) ([0-9]{2}):([0-9]{2})$~', trim($s), $m)) return null;
+    $now = time();
+    $ts  = mktime((int)$m[3], (int)$m[4], 0, (int)$m[2], (int)$m[1], (int)date('Y', $now));
+    if ($ts > $now + 86400) $ts = mktime((int)$m[3], (int)$m[4], 0, (int)$m[2], (int)$m[1], (int)date('Y', $now) - 1);
+    return $ts;
+  }
+}
+
+if (!function_exists('bo_ago')) {
+  function bo_ago($ts) {
+    if (!$ts) return '';
+    $d = time() - $ts;
+    if ($d < 90)     return 'just now';
+    if ($d < 5400)   return round($d / 60) . 'm ago';
+    if ($d < 172800) return round($d / 3600) . 'h ago';
+    return round($d / 86400) . 'd ago';
+  }
+}
+
+if (!function_exists('bo_when')) {
+  function bo_when($ts) {
+    if (!$ts) return '&#8211;';
+    return (date('Y-m-d', $ts) === date('Y-m-d'))
+      ? 'Today at ' . date('H:i', $ts)
+      : date('d M', $ts) . ' at ' . date('H:i', $ts);
+  }
+}
+
+if (!function_exists('bo_icon')) {
+  /* Inline SVG only. The panel renders on a LAN-only box, and a remote asset
+     would drop its labels exactly when WAN is down - which is when someone is
+     most likely to be looking at a backup dashboard. */
+  function bo_icon($k, $px = 16, $colour = 'currentColor') {
+    $s = "width='$px' height='$px' viewBox='0 0 24 24' fill='none' stroke='$colour'"
+       . " stroke-width='2' stroke-linecap='round' stroke-linejoin='round'";
+    switch ($k) {
+      case 'shield':  return "<svg $s><path d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'/><path d='M9 12l2 2 4-4'/></svg>";
+      case 'alert':   return "<svg $s><circle cx='12' cy='12' r='10'/><path d='M12 8v4M12 16h.01'/></svg>";
+      case 'sync':    return "<svg $s><path d='M21 12a9 9 0 01-9 9 9 9 0 01-7.4-3.9'/><path d='M3 12a9 9 0 019-9 9 9 0 017.4 3.9'/><path d='M21 3v4h-4M3 21v-4h4'/></svg>";
+      case 'db':      return "<svg $s><ellipse cx='12' cy='6' rx='8' ry='3'/><path d='M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6'/><path d='M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3'/></svg>";
+      case 'check':   return "<svg $s><circle cx='12' cy='12' r='10'/><path d='M8 12.5l2.5 2.5L16 9.5'/></svg>";
+      case 'cross':   return "<svg $s><circle cx='12' cy='12' r='10'/><path d='M15 9l-6 6M9 9l6 6'/></svg>";
+      case 'dash':    return "<svg $s><path d='M5 12h14'/></svg>";
+      case 'clock':   return "<svg $s><circle cx='12' cy='12' r='9'/><path d='M12 7v5l3 2'/></svg>";
+      case 'pulse':   return "<svg $s><path d='M3 12h4l3 8 4-16 3 8h4'/></svg>";
+      case 'files':   return "<svg $s><rect x='3' y='4' width='18' height='16' rx='2'/><path d='M3 10h18'/></svg>";
+      case 'image':   return "<svg $s><rect x='3' y='3' width='18' height='18' rx='2'/><circle cx='8.5' cy='9' r='1.5'/><path d='M21 16l-5-5-11 10'/></svg>";
+      case 'video':   return "<svg $s><rect x='2' y='6' width='13' height='12' rx='2'/><path d='M15 11l7-4v10l-7-4z'/></svg>";
+      case 'doc':     return "<svg $s><path d='M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z'/><path d='M14 3v5h5'/></svg>";
+      case 'phone':   return "<svg $s><rect x='6' y='2' width='12' height='20' rx='2'/><path d='M11 18h2'/></svg>";
+      case 'gear':    return "<svg $s><circle cx='12' cy='12' r='3'/><path d='M19.4 15a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 01-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.9-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 01-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.9.3l-.1.1a2 2 0 01-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.9 1.7 1.7 0 00-1.5-1H3a2 2 0 010-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.9l-.1-.1a2 2 0 012.8-2.8l.1.1a1.7 1.7 0 001.9.3H10a1.7 1.7 0 001-1.5V3a2 2 0 014 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.9-.3l.1-.1a2 2 0 012.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.9V10a1.7 1.7 0 001.5 1H21a2 2 0 010 4h-.1a1.7 1.7 0 00-1.5 1z'/></svg>";
+      case 'cloud':   return "<svg $s><path d='M18 17h-8a5 5 0 110-10 6 6 0 0111.3 2.3A4 4 0 0118 17z'/></svg>";
+      case 'refresh': return "<svg $s><path d='M21 12a9 9 0 11-3-6.7'/><path d='M21 4v5h-5'/></svg>";
+    }
+    return '';
+  }
+}
+
+if (!function_exists('bo_brand')) {
+  /* Provider marks, brand-coloured so the three storage columns stay
+     distinguishable at a glance in either dashboard theme. */
+  function bo_brand($k, $px = 15) {
+    switch ($k) {
+      case 'g':
+        return "<svg width='$px' height='$px' viewBox='0 0 87.3 78' role='img' aria-label='Google Drive'>"
+          . "<path fill='#0066da' d='M6.6 66.85l3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8H0c0 1.55.4 3.1 1.2 4.5z'/>"
+          . "<path fill='#00ac47' d='M43.65 25L29.9 1.2c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44A9.06 9.06 0 000 53h27.5z'/>"
+          . "<path fill='#ea4335' d='M73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5H59.8l5.85 11.5z'/>"
+          . "<path fill='#00832d' d='M43.65 25L57.4 1.2C56.05.4 54.5 0 52.9 0H34.4c-1.6 0-3.15.45-4.5 1.2z'/>"
+          . "<path fill='#2684fc' d='M59.8 53H27.5L13.75 76.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z'/>"
+          . "<path fill='#ffba00' d='M73.4 26.5l-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3L43.65 25l16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z'/></svg>";
+      case 'd':
+        return "<svg width='$px' height='$px' viewBox='0 0 24 24' role='img' aria-label='Dropbox'>"
+          . "<path fill='#0061ff' d='M6 1.807L0 5.629l6 3.822 6.001-3.822L6 1.807zM18 1.807l-6 3.822 6 3.822 6-3.822-6-3.822zM0 13.274l6 3.822 6.001-3.822L6 9.452l-6 3.822zM18 9.452l-6 3.822 6 3.822 6-3.822-6-3.822zM6 18.371l6.001 3.822 6-3.822-6-3.822L6 18.371z'/></svg>";
+      case 'm':
+        return "<svg width='$px' height='$px' viewBox='0 0 24 24' role='img' aria-label='mail.ru'>"
+          . "<path fill='#005ff9' d='M15.61 12a3.61 3.61 0 11-7.22 0 3.61 3.61 0 017.22 0zM12 0a12 12 0 100 24 11.94 11.94 0 008.48-3.51l-1.41-1.41A9.96 9.96 0 0112 22C6.48 22 2 17.52 2 12S6.48 2 12 2s10 4.48 10 10c0 1.38-.28 2.7-.79 3.9-.24.36-.6.6-1.02.6-.66 0-1.19-.53-1.19-1.19V12a7 7 0 10-2.05 4.95 3.39 3.39 0 002.74 1.35c1.05 0 1.98-.52 2.55-1.31A11.9 11.9 0 0024 12C24 5.37 18.63 0 12 0z'/></svg>";
+    }
+    return '';
+  }
+}
+
+if (!function_exists('bo_rc')) {
+  /* Live transfer stats straight from the running rclone via its rc server.
+   *
+   * This is what makes the panel update like a CPU graph: cron files were the
+   * only source before, and the fastest of those was a minute, with byte figures
+   * needing a Dropbox listing call that cannot run every second. rc answers
+   * in-process, instantly, as often as asked.
+   *
+   * Hard 1s timeout and a silent null on any failure: a dashboard must never
+   * hang because a transfer is wedged. Absence of rc just means the panel falls
+   * back to the cron-written figures.
+   */
+  function bo_rc() {
+    static $cached = false, $val = null;
+    if ($cached) return $val;
+    $cached = true;
+
+    $pw = @file_get_contents('/mnt/user/appdata/rclone/config/rc.secret');
+    if ($pw === false) return null;
+    $pw = trim($pw);
+
+    $ctx = stream_context_create(['http' => [
+      'method'        => 'POST',
+      'header'        => "Authorization: Basic " . base64_encode("dash:$pw") . "\r\n"
+                       . "Content-Length: 0\r\n",
+      'timeout'       => 1.0,
+      'ignore_errors' => true,
+    ]]);
+    $raw = @file_get_contents('http://127.0.0.1:5572/core/stats', false, $ctx);
+    if ($raw === false) return null;
+    $j = json_decode($raw, true);
+    if (!is_array($j) || !isset($j['totalBytes'])) return null;
+
+    /* Which share is in flight, taken from the transfer list rather than the ini
+       so it is correct the instant rclone moves on to the next one. */
+    $share = '';
+    foreach (($j['transferring'] ?? []) as $t) {
+      if (!empty($t['srcFs']) && preg_match('~/mnt/user/([^/]+)~', $t['srcFs'], $m)) { $share = $m[1]; break; }
+    }
+
+    $done  = (float)($j['bytes'] ?? 0);
+    $total = (float)($j['totalBytes'] ?? 0);
+    $val = [
+      'share'   => $share,
+      'done'    => $done,
+      'total'   => $total,
+      'pct'     => $total > 0 ? min(100, $done * 100 / $total) : 0,
+      'speed'   => (float)($j['speed'] ?? 0),
+      'eta'     => (int)($j['eta'] ?? 0),
+      'errors'  => (int)($j['errors'] ?? 0),
+      'checks'  => (int)($j['checks'] ?? 0),
+      'xfers'   => (int)($j['totalTransfers'] ?? 0),
+      'elapsed' => (float)($j['elapsedTime'] ?? 0),
+      'files'   => array_slice(array_map(function($t) {
+                     return ['name' => basename($t['name'] ?? ''),
+                             'pct'  => (float)($t['percentage'] ?? 0),
+                             'speed'=> (float)($t['speed'] ?? 0)];
+                   }, $j['transferring'] ?? []), 0, 4),
+    ];
+    return $val;
+  }
+}
+
+if (!function_exists('bo_dur')) {
+  function bo_dur($secs) {
+    $secs = (int)$secs;
+    if ($secs <= 0) return '';
+    if ($secs >= 86400) return floor($secs / 86400) . 'd ' . floor(($secs % 86400) / 3600) . 'h';
+    if ($secs >= 3600)  return floor($secs / 3600) . 'h ' . floor(($secs % 3600) / 60) . 'm';
+    if ($secs >= 60)    return floor($secs / 60) . 'm';
+    return $secs . 's';
+  }
+}
+
+if (!function_exists('bo_plan')) {
+  /* Which datasets go to which clouds, and which tool takes them there.
+     A cloud absent for a dataset is a deliberate decision, NOT a gap - the panel
+     must render those grey, never red.
+
+     Dropbox carries only videos and raw-photos: the mirror is capped by a hard
+     3 TB that cannot be upgraded, so it takes what cannot be re-sourced and
+     nothing else. immich is phone media, already in iCloud and Google Photos.
+     mail.ru takes the small irreplaceable set. */
+  function bo_plan() {
+    return [
+      'raw-photos' => ['title' => 'Raw Photos', 'icon' => 'image', 'tint' => '#16a34a',
+                       'targets' => ['g' => 'duplicacy', 'd' => 'rclone', 'm' => 'duplicacy']],
+      'videos'     => ['title' => 'Videos',     'icon' => 'video', 'tint' => '#7c3aed',
+                       'targets' => ['g' => 'duplicacy', 'd' => 'rclone']],
+      'paperless'  => ['title' => 'Paperless',  'icon' => 'doc',   'tint' => '#ea580c',
+                       'targets' => ['g' => 'duplicacy', 'm' => 'duplicacy']],
+      'immich'     => ['title' => 'Immich',     'icon' => 'phone', 'tint' => '#2563eb',
+                       'targets' => ['g' => 'duplicacy']],
+      'appdata'    => ['title' => 'Appdata',    'icon' => 'gear',  'tint' => '#64748b',
+                       'targets' => ['g' => 'duplicacy', 'm' => 'duplicacy']],
+    ];
+  }
+}
+
+if (!function_exists('bo_next_run')) {
+  /* Next scheduled job, from the two cron times that actually exist:
+     02:30 Duplicacy, 05:30 the Dropbox mirror. Hard-coded to match
+     duplicacy.cron and rclone-dropbox.cron - if those move, this must too. */
+  function bo_next_run() {
+    $best = null; $what = '';
+    foreach ([['02:30', 'Duplicacy'], ['05:30', 'Dropbox mirror']] as [$hhmm, $name]) {
+      [$h, $m] = array_map('intval', explode(':', $hhmm));
+      $t = mktime($h, $m, 0);
+      if ($t <= time()) $t += 86400;
+      if ($best === null || $t < $best) { $best = $t; $what = $name; }
+    }
+    return [$best, $what];
+  }
+}
+
+if (!function_exists('bo_state')) {
+  /* Gathers everything the panel needs into one array, so the renderer below
+     contains layout only and the poll endpoint can reuse it verbatim. */
+  function bo_state() {
+    $inv  = bo_ini('/var/local/emhttp/backup-inventory.ini');
+    $cov  = bo_ini('/var/local/emhttp/duplicacy-coverage.ini');
+    $live = bo_ini('/var/local/emhttp/duplicacy.ini');
+    $rc   = bo_ini('/var/local/emhttp/rclone-dropbox.ini');
+    $rl   = bo_ini('/var/local/emhttp/rclone-dropbox-live.ini');
+    $pg   = bo_ini('/var/local/emhttp/rclone-progress.ini');
+
+    $get = function($a, $k, $d = '') { return isset($a[$k]) && trim((string)$a[$k]) !== '' ? trim((string)$a[$k]) : $d; };
+
+    $plan = bo_plan();
+    $rows = []; $gaps = []; $covered = 0; $slots = 0; $newest = null;
+
+    foreach ($plan as $share => $spec) {
+      $key   = 'cov_' . str_replace('-', '_', $share);
+      $raw   = $get($cov, $key);
+      $have  = [];
+      foreach (explode('|', $raw) as $part) {
+        if ($part === '') continue;
+        $b = explode(':', $part, 2);
+        $have[$b[0]] = isset($b[1]) ? $b[1] : '-';
+      }
+
+      $cells = []; $ok = 0; $n = 0; $rowNewest = null;
+      foreach (['g', 'd', 'm'] as $sk) {
+        if (!isset($spec['targets'][$sk])) { $cells[$sk] = ['state' => 'na']; continue; }
+        $n++; $slots++;
+        $tool = $spec['targets'][$sk];
+        $v = $have[$sk] ?? null;
+
+        if ($v === null) {
+          $cells[$sk] = ['state' => 'unknown', 'tool' => $tool];
+        } elseif (preg_match('/^seed([0-9.]+)$/', $v, $m)) {
+          $cells[$sk] = ['state' => 'syncing', 'pct' => (float)$m[1], 'tool' => $tool];
+        } elseif ($v === '-' || $v === '') {
+          $cells[$sk] = ['state' => 'missing', 'tool' => $tool];
+          $gaps[] = ['share' => $spec['title'], 'cloud' => $sk, 'tool' => $tool];
+        } else {
+          $rev = ''; $when = $v;
+          if (preg_match('/^r([0-9]+)@(.*)$/', $v, $m)) { $rev = $m[1]; $when = $m[2]; }
+          $ts = bo_parse_stamp($when);
+          $cells[$sk] = ['state' => 'ok', 'ts' => $ts, 'rev' => $rev, 'tool' => $tool];
+          $ok++; $covered++;
+          if ($ts && (!$rowNewest || $ts > $rowNewest)) $rowNewest = $ts;
+          if ($ts && (!$newest || $ts > $newest)) $newest = $ts;
+        }
+      }
+
+      $ik = 'inv_' . str_replace('-', '_', $share);
+      $rows[] = [
+        'share' => $share, 'title' => $spec['title'], 'icon' => $spec['icon'], 'tint' => $spec['tint'],
+        'cells' => $cells, 'ok' => $ok, 'targets' => $n,
+        'bytes' => (float)$get($inv, $ik . '_bytes', '0'),
+        'files' => (int)$get($inv, $ik . '_files', '0'),
+        'last'  => $rowNewest,
+      ];
+    }
+
+    /* Current activity. Duplicacy takes precedence when both are moving, since
+       its runs are short and the mirror runs for days. */
+    $act = null;
+    if ($get($live, 'status') === 'running' && $get($live, 'repo') !== '') {
+      $act = [
+        'what' => 'Backing up', 'target' => 'Google Drive', 'tool' => 'Duplicacy',
+        'name' => $get($live, 'repo'),
+        'pct'  => (float)str_replace('%', '', $get($live, 'pct', '0')),
+        'rate' => $get($live, 'speed'), 'eta' => $get($live, 'eta'),
+        'done' => '', 'total' => '',
+      ];
+    } elseif ($get($rc, 'rc_state') === 'running') {
+      /* Prefer rc: it is instantaneous and reports the bytes of THIS run, which
+         is what a progress bar should track. The cron files are the fallback for
+         when rc is unreachable - a sync started before rc was enabled, or a
+         wedged process. */
+      $live  = bo_rc();
+      $share = $live["share"] ?? $get($pg, "pg_share", $get($rc, "rc_share"));
+      $t = bo_plan()[$share]["title"] ?? $share;
+      if ($live) {
+        $ov = bo_overall($share, $live);
+        $act = [
+          "what" => "Syncing", "target" => "Dropbox", "tool" => "rclone", "name" => $t,
+          "pct"   => $ov["pct"],
+          "rate"  => bo_rate($live["speed"]),
+          "eta"   => bo_dur($live["eta"]),
+          "done"  => bo_bytes($ov["done"]),
+          "total" => bo_bytes($ov["total"]),
+          'files' => $live['xfers'] ? number_format($live['xfers']) : '',
+          'files_total' => '',
+          'inflight' => $live['files'],
+          'source' => 'rc',
+        ];
+      } else {
+        $act = [
+          'what' => 'Syncing', 'target' => 'Dropbox', 'tool' => 'rclone', 'name' => $t,
+          'pct'  => (float)$get($pg, 'pg_pct', $get($rl, 'rl_pct', '0')),
+          'rate' => bo_rate($get($pg, 'pg_rate', '0')),
+          'eta'  => $get($pg, 'pg_eta'),
+          'done' => bo_bytes($get($pg, 'pg_done', '0')),
+          'total' => bo_bytes($get($pg, 'pg_total', '0')),
+          'files' => $get($rl, 'rl_files'), 'files_total' => $get($rl, 'rl_total_files'),
+          'inflight' => [], 'source' => 'cron',
+        ];
+      }
+    }
+
+    /* Anything mid-transfer is not a gap: a copy is actively being produced. */
+    $syncing = 0;
+    foreach ($rows as $r) foreach ($r['cells'] as $c) if (($c['state'] ?? '') === 'syncing') $syncing++;
+
+    return [
+      'rows' => $rows, 'gaps' => $gaps, 'act' => $act, 'syncing' => $syncing,
+      'total_bytes' => (float)$get($inv, 'inv_total_bytes', '0'),
+      'health' => $slots > 0 ? (int)round($covered * 100 / $slots) : 0,
+      'covered' => $covered, 'slots' => $slots,
+      'newest' => $newest,
+      'inv_updated' => (int)$get($inv, 'inv_updated', '0'),
+      'cov_updated' => $get($cov, 'cov_updated', 'never'),
+      'rc_used' => $get($rc, 'rc_used'), 'rc_total' => $get($rc, 'rc_total'),
+      'rl_errors' => (int)$get($rl, 'rl_errors', '0'),
+    ];
+  }
+}
+
+if (!function_exists('bo_overall')) {
+  /* Overall share coverage, not just this run's progress.
+   *
+   * rc reports bytes/totalBytes for the CURRENT invocation: after a restart that
+   * reads 0.5% even though half the share is already on Dropbox, which looks
+   * like the transfer went backwards. rclone's totalBytes is what remains to be
+   * sent, so everything already there is (local total - totalBytes), and the
+   * honest progress figure is that plus what this run has moved.
+   *
+   * Falls back to run-local figures when the inventory has no entry for the
+   * share - better a narrower truth than a confident wrong number.
+   */
+  function bo_overall($share, $rc) {
+    $inv = bo_ini('/var/local/emhttp/backup-inventory.ini');
+    $k   = 'inv_' . str_replace('-', '_', (string)$share) . '_bytes';
+    $localTotal = isset($inv[$k]) ? (float)$inv[$k] : 0;
+
+    if ($localTotal <= 0 || !$rc) {
+      return ['done' => $rc['done'] ?? 0, 'total' => $rc['total'] ?? 0,
+              'pct' => $rc['pct'] ?? 0, 'scope' => 'run'];
+    }
+    $already = $localTotal - (float)$rc['total'];
+    if ($already < 0) $already = 0;
+    $done = $already + (float)$rc['done'];
+    if ($done > $localTotal) $done = $localTotal;
+    return ['done' => $done, 'total' => $localTotal,
+            'pct' => $localTotal > 0 ? $done * 100 / $localTotal : 0, 'scope' => 'share'];
+  }
+}
+
+if (!function_exists('bo_inflight_text')) {
+  /* One line naming what is actually moving. During a 1.5 TB seed "42%" alone is
+     inert; seeing the filenames tick past is how you tell it is alive and what
+     it is working through. */
+  function bo_inflight_text($a) {
+    if (!empty($a['inflight'])) {
+      $names = [];
+      foreach ($a['inflight'] as $f) {
+        $n = $f['name'];
+        if (strlen($n) > 34) $n = substr($n, 0, 31) . '...';
+        $names[] = $n . ' ' . round($f['pct']) . '%';
+      }
+      return implode('   ', $names);
+    }
+    if (!empty($a['files']) && !empty($a['files_total'])) {
+      return number_format((int)$a['files']) . ' / ' . number_format((int)$a['files_total']) . ' files';
+    }
+    if (!empty($a['files'])) return $a['files'] . ' files transferred this run';
+    return '';
+  }
+}
+
+if (!function_exists('bo_live_json')) {
+  /* Small payload for the fast poll: only what changes second to second, so the
+     1s tick costs a few hundred bytes instead of re-sending the whole panel. */
+  function bo_live_json() {
+    $rc   = bo_ini('/var/local/emhttp/rclone-dropbox.ini');
+    $live = bo_ini('/var/local/emhttp/duplicacy.ini');
+    $g = function($a, $k, $d = '') { return isset($a[$k]) && trim((string)$a[$k]) !== '' ? trim((string)$a[$k]) : $d; };
+
+    $out = ['running' => false];
+
+    if ($g($live, 'status') === 'running' && $g($live, 'repo') !== '') {
+      $p = (float)str_replace('%', '', $g($live, 'pct', '0'));
+      return ['running' => true, 'name' => $g($live, 'repo'), 'pct' => round($p, 1),
+              'bytes' => '', 'rate' => $g($live, 'speed'), 'eta' => $g($live, 'eta'),
+              'inflight' => 'Duplicacy to Google Drive'];
+    }
+
+    if ($g($rc, 'rc_state') === 'running') {
+      $r = bo_rc();
+      if ($r) {
+        $share = $r['share'] ?: $g($rc, 'rc_share');
+        /* Overall share progress, not this run's - see bo_overall. */
+        $ov = bo_overall($share, $r);
+        $out = [
+          'running'  => true,
+          'name'     => bo_plan()[$share]['title'] ?? $share,
+          'pct'      => round($ov['pct'], 1),
+          'bytes'    => bo_bytes($ov['done']) . ' / ' . bo_bytes($ov['total']),
+          'rate'     => bo_rate($r['speed']),
+          'eta'      => bo_dur($r['eta']),
+          'inflight' => bo_inflight_text(['inflight' => $r['files'], 'files' => $r['xfers']]),
+          'errors'   => $r['errors'],
+        ];
+      } else {
+        $out = ['running' => true, 'name' => $g($rc, 'rc_share'), 'pct' => 0,
+                'bytes' => '', 'rate' => '', 'eta' => '', 'inflight' => 'rc unreachable'];
+      }
+    }
+    return $out;
+  }
+}
+
+if (!function_exists('bo_render')) {
+  function bo_render() {
+    $st = bo_state();
+    $h  = function($s) { return htmlspecialchars((string)$s, ENT_QUOTES); };
+
+    $green = '#16a34a'; $red = '#dc2626'; $amber = '#d97706'; $blue = '#2563eb';
+    $grey = '#94a3b8'; $purple = '#7c3aed';
+    $line = '1px solid var(--bo-border)';
+
+    $nGaps = count($st['gaps']);
+    $attention = $nGaps > 0 || $st['rl_errors'] > 0;
+
+    /* ---- header ---- */
+    $pill = $attention
+      ? "<span class='bo-pill bo-pill-warn'>" . bo_icon('alert', 14, $amber) . " Attention Required</span>"
+      : "<span class='bo-pill bo-pill-ok'>" . bo_icon('check', 14, $green) . " All Protected</span>";
+
+    $out = "<div class='bo-wrap'>";
+    $out .= "<div class='bo-head'>"
+          . "<div class='bo-brandmark'>" . bo_icon('cloud', 26, $blue) . "</div>"
+          . "<div class='bo-titles'><div class='bo-title'>Backup</div>"
+          . "<div class='bo-sub'>Backup overview</div></div>"
+          . $pill
+          . "<div class='bo-head-actions'>"
+          . "<button type='button' class='bo-btn' onclick='boRefresh(true)'>"
+          . bo_icon('refresh', 14, 'currentColor') . " Refresh now</button>"
+          . "</div></div>";
+
+    $out .= "<div class='bo-lastok'>Last successful backup: <b>" . bo_when($st['newest']) . "</b>"
+          . ($st['newest'] ? " <span class='bo-ok-tick'>" . bo_icon('check', 14, $green) . "</span>" : '')
+          . "</div>";
+
+    /* ---- stat cards ---- */
+    $cards = [
+      ['n' => count($st['rows']), 'unit' => '',  'label' => 'Datasets',        'sub' => 'Configured',
+       'icon' => 'shield', 'col' => $green],
+      ['n' => $nGaps,            'unit' => '',  'label' => 'Missing Backups', 'sub' => $nGaps ? 'Need attention' : 'None',
+       'icon' => 'alert',  'col' => $nGaps ? $amber : $green],
+      ['n' => ($st['act'] ? 1 : 0), 'unit' => '', 'label' => 'Running',       'sub' => $st['act'] ? 'Transfer in progress' : 'Idle',
+       'icon' => 'sync',   'col' => $st['act'] ? $blue : $grey],
+      ['n' => bo_bytes($st['total_bytes']), 'unit' => '', 'label' => 'Total Data', 'sub' => 'Across all datasets',
+       'icon' => 'db',     'col' => $purple],
+      ['n' => $st['health'], 'unit' => '%', 'label' => 'Overall Health',
+       'sub' => $st['health'] >= 90 ? 'Good' : ($st['health'] >= 70 ? 'Fair' : 'Poor'),
+       'icon' => 'check',  'col' => $st['health'] >= 90 ? $green : ($st['health'] >= 50 ? $amber : $red)],
+    ];
+    $out .= "<div class='bo-cards'>";
+    foreach ($cards as $c) {
+      $out .= "<div class='bo-card'>"
+            . "<div class='bo-card-ico' style='background:" . $c['col'] . "1a'>" . bo_icon($c['icon'], 20, $c['col']) . "</div>"
+            . "<div><div class='bo-card-n' style='color:" . $c['col'] . "'>" . $h($c['n'])
+            . ($c['unit'] ? "<span class='bo-card-u'>" . $h($c['unit']) . "</span>" : '') . "</div>"
+            . "<div class='bo-card-l'>" . $h($c['label']) . "</div>"
+            . "<div class='bo-card-s'>" . $h($c['sub']) . "</div></div></div>";
+    }
+    $out .= "</div>";
+
+    /* ---- current activity ---- */
+    if ($st['act']) {
+      $a = $st['act'];
+      $pct = max(0, min(100, $a['pct']));
+      $bytes = ($a['done'] !== '' && $a['total'] !== '') ? $a['done'] . ' / ' . $a['total'] : '';
+
+      /* Every volatile figure carries an id so the 1s poll can patch text in
+         place. Replacing the whole panel that often would fight the browser for
+         layout and kill any tooltip the moment you hovered it. */
+      $out .= "<div class='bo-act' id='bo-act'>"
+            . "<div class='bo-act-ico bo-spin'>" . bo_icon('sync', 20, $blue) . "</div>"
+            . "<div class='bo-act-txt'><div class='bo-act-t'>Current Activity</div>"
+            . "<div class='bo-act-s'>" . $h($a['what']) . " <b id='bo-act-name'>" . $h($a['name']) . "</b> to "
+            . $h($a['target']) . " <span class='bo-tool'>&#183; " . $h($a['tool']) . "</span></div></div>"
+            . "<div class='bo-act-bar'><div class='bo-bar'>"
+            . "<div class='bo-bar-fill' id='bo-bar' style='width:{$pct}%'></div>"
+            . "<div class='bo-bar-lbl' id='bo-pct'>" . round($pct) . "%</div></div>"
+            . "<div class='bo-act-files' id='bo-inflight'>" . $h(bo_inflight_text($a)) . "</div>"
+            . "</div>"
+            . "<div class='bo-act-stats'>"
+            . "<span>" . bo_icon('files', 15, $grey) . " <span id='bo-bytes'>" . $h($bytes) . "</span></span>"
+            . "<span>" . bo_icon('pulse', 15, $green) . " <span id='bo-rate'>" . $h($a['rate']) . "</span></span>"
+            . "<span>" . bo_icon('clock', 15, $grey) . " ETA <span id='bo-eta'>" . $h($a['eta'] !== '' ? $a['eta'] : '?') . "</span></span>"
+            . "</div></div>";
+    } else {
+      $out .= "<div class='bo-act bo-act-idle' id='bo-act'>"
+            . "<div class='bo-act-ico'>" . bo_icon('check', 20, $green) . "</div>"
+            . "<div class='bo-act-txt'><div class='bo-act-t'>Current Activity</div>"
+            . "<div class='bo-act-s'>Nothing transferring right now</div></div></div>";
+    }
+
+    /* ---- dataset table ---- */
+    $out .= "<div class='bo-table-scroll'><div class='bo-table'>";
+    /* Header cells stack provider over tool. Side by side, the grey tool name
+       read as a column of its own - the grid gap put as much space between
+       "Google Drive" and "Duplicacy" as between two real columns. */
+    $hcol = function($brand, $name, $tool) {
+      return "<div><span class='bo-hcol'>" . $brand . "<span>" . $name . "</span></span>"
+           . "<span class='bo-tool2'>" . $tool . "</span></div>";
+    };
+    $out .= "<div class='bo-tr bo-th'>"
+          . "<div><span class='bo-hcol'><span>Dataset</span></span></div>"
+          . $hcol(bo_brand('g'), 'Google Drive', 'Duplicacy')
+          . $hcol(bo_brand('d'), 'Dropbox',      'rclone')
+          . $hcol(bo_brand('m'), 'Mail.ru',      'Duplicacy')
+          . "<div><span class='bo-hcol'><span>Protection</span></span></div>"
+          . "<div><span class='bo-hcol'><span>Last Backup</span></span></div>"
+          . "<div><span class='bo-hcol'><span>Size</span></span></div>"
+          . "<div></div></div>";  // spacer: absorbs leftover width, see .bo-tr
+
+    foreach ($st['rows'] as $r) {
+      $out .= "<div class='bo-tr'>";
+      $out .= "<div class='bo-ds'><span class='bo-ds-ico' style='background:" . $r['tint'] . "1a'>"
+            . bo_icon($r['icon'], 16, $r['tint']) . "</span><b>" . $h($r['title']) . "</b></div>";
+
+      foreach (['g', 'd', 'm'] as $sk) {
+        $c = $r['cells'][$sk];
+        switch ($c['state']) {
+          case 'ok':
+            $tip = $h(($c['tool'] === 'rclone' ? 'Files mirrored' : 'Snapshot' . ($c['rev'] !== '' ? " revision {$c['rev']}" : ''))
+                    . ' - ' . bo_when($c['ts']));
+            $out .= "<div class='bo-cell' title='$tip'>" . bo_icon('check', 15, $green)
+                  . " <span style='color:$green'>" . bo_ago($c['ts']) . "</span></div>";
+            break;
+          case 'syncing':
+            $out .= "<div class='bo-cell' title='" . $h(round($c['pct'], 1)) . "% of bytes present - transfer in progress'>"
+                  . bo_icon('sync', 15, $blue) . " <span style='color:$blue'>Syncing ("
+                  . round($c['pct']) . "%)</span></div>";
+            break;
+          case 'missing':
+            /* Amber warning, not a red error. Nothing is broken here - the target
+               is configured and simply has not been uploaded to yet. Red is
+               reserved for something that failed. */
+            $out .= "<div class='bo-cell' title='No backup copy yet - this target is configured but nothing has been uploaded to it'>"
+                  . bo_icon('alert', 15, $amber) . " <span style='color:$amber'>No copy yet</span></div>";
+            break;
+          case 'unknown':
+            $out .= "<div class='bo-cell' title='Not checked since boot'>"
+                  . bo_icon('clock', 15, $grey) . " <span style='color:$grey'>Unchecked</span></div>";
+            break;
+          default:
+            /* Deliberately not a target. The mockup called this "Missing", but
+               labelling a decision as a failure trains you to ignore the red. */
+            $out .= "<div class='bo-cell' title='Not a target by design'>"
+                  . bo_icon('dash', 15, $grey) . " <span style='color:$grey'>Not a target</span></div>";
+        }
+      }
+
+      $full = $r['targets'] > 0 && $r['ok'] === $r['targets'];
+      $anySync = false;
+      foreach ($r['cells'] as $c) if (($c['state'] ?? '') === 'syncing') $anySync = true;
+      $pcol = $full ? $green : ($anySync ? $blue : $amber);
+      $pw   = $r['targets'] > 0 ? (int)round($r['ok'] * 100 / $r['targets']) : 0;
+      $ptxt = $anySync && !$full ? 'Syncing' : "{$r['ok']} / {$r['targets']}";
+      $out .= "<div class='bo-prot'><span class='bo-prot-b' style='color:$pcol;background:" . $pcol . "1a'>"
+            . $h($ptxt) . "</span><span class='bo-prot-bar'><i style='width:{$pw}%;background:$pcol'></i></span></div>";
+
+      $out .= "<div class='bo-cell'>" . bo_when($r['last']) . "</div>";
+      $out .= "<div class='bo-cell bo-size' title='" . number_format($r['files']) . " files'>"
+            . bo_bytes($r['bytes']) . "</div>";
+      $out .= "<div></div>";  // spacer, matching the header
+      $out .= "</div>";
+    }
+    $out .= "</div></div>";
+
+    /* ---- needs attention ---- */
+    $items = [];
+    $cloudName = ['g' => 'Google Drive', 'd' => 'Dropbox', 'm' => 'mail.ru'];
+    foreach ($st['gaps'] as $g) {
+      $items[] = "<b>" . $h($g['share']) . ":</b> no copy on " . $h($cloudName[$g['cloud']])
+               . " <span class='bo-tool'>(" . $h($g['tool']) . ")</span>";
+    }
+    if ($st['rl_errors'] > 0) {
+      $items[] = "<b>Dropbox mirror:</b> " . (int)$st['rl_errors'] . " error"
+               . ($st['rl_errors'] > 1 ? 's' : '') . " in today's sync log";
+    }
+    foreach ($st['rows'] as $r) {
+      if ($r['targets'] === 1) {
+        $items[] = "<b>" . $h($r['title']) . ":</b> only one cloud target configured";
+      }
+    }
+    if ($items) {
+      $out .= "<div class='bo-attn'><div class='bo-attn-h'>" . bo_icon('alert', 17, $amber)
+            . " Needs Attention</div><div class='bo-attn-g'>";
+      foreach ($items as $i) $out .= "<div class='bo-attn-i'><i></i><span>$i</span></div>";
+      $out .= "</div></div>";
+    } else {
+      $out .= "<div class='bo-allok'>" . bo_icon('check', 17, $green)
+            . " Every configured target holds a copy</div>";
+    }
+
+    /* ---- footer ---- */
+    [$nextTs, $nextWhat] = bo_next_run();
+    $out .= "<div class='bo-foot'><span>" . bo_icon('clock', 14, $grey) . " Next scheduled run: <b>"
+          . bo_when($nextTs) . "</b> &#183; " . $h($nextWhat) . "</span>"
+          . "<span class='bo-foot-r'>coverage checked " . $h($st['cov_updated'])
+          . " &#183; refreshing in <b id='bo-count'>60</b>s</span></div>";
+
+    $out .= "</div>";
+    return $out;
+  }
+}
+
+?>
