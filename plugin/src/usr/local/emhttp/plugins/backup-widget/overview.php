@@ -112,6 +112,7 @@ if (!function_exists('bo_icon')) {
       case 'gear':    return "<svg $s><circle cx='12' cy='12' r='3'/><path d='M19.4 15a1.7 1.7 0 00.3 1.9l.1.1a2 2 0 01-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.9-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 01-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.9.3l-.1.1a2 2 0 01-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.9 1.7 1.7 0 00-1.5-1H3a2 2 0 010-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.9l-.1-.1a2 2 0 012.8-2.8l.1.1a1.7 1.7 0 001.9.3H10a1.7 1.7 0 001-1.5V3a2 2 0 014 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.9-.3l.1-.1a2 2 0 012.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.9V10a1.7 1.7 0 001.5 1H21a2 2 0 010 4h-.1a1.7 1.7 0 00-1.5 1z'/></svg>";
       case 'cloud':   return "<svg $s><path d='M18 17h-8a5 5 0 110-10 6 6 0 0111.3 2.3A4 4 0 0118 17z'/></svg>";
       case 'refresh': return "<svg $s><path d='M21 12a9 9 0 11-3-6.7'/><path d='M21 4v5h-5'/></svg>";
+      case 'chev':    return "<svg $s><path d='M6 9l6 6 6-6'/></svg>";
     }
     return '';
   }
@@ -488,207 +489,316 @@ if (!function_exists('bo_live_json')) {
   }
 }
 
+if (!function_exists('bo_pal')) {
+  /* One palette, shared by the tile and the page. The two surfaces having the
+     same colours by coincidence is not the same as having them by construction. */
+  function bo_pal() {
+    return ['green' => '#16a34a', 'blue' => '#2563eb', 'amber' => '#b45309',
+            'red'   => '#dc2626', 'grey'  => '#94a3b8', 'pale' => '#cbd5e1'];
+  }
+}
+
+if (!function_exists('bo_mark')) {
+  /* One family of dots, GitHub-Actions style. Defined here rather than in the
+     widget so the page cannot drift from the tile: a green dot must mean the same
+     thing in both places or neither can be trusted.
+
+     The not-configured state took three attempts - an exclamation mark read as
+     "broken", a hollow ring as "inactive", a dash as missing data. A greyed member
+     of the same dot family reads as a state in the series, which is what it is. */
+  function bo_mark($state, $px = 13) {
+    $p = bo_pal();
+    switch ($state) {
+      case 'ok':
+        return ['svg' => "<svg width='$px' height='$px' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5' fill='{$p['green']}'/></svg>",
+                'tip' => 'Backed up', 'word' => 'protected', 'colour' => $p['green']];
+      case 'syncing':
+        return ['svg' => bo_icon('sync', $px, $p['blue']),
+                'tip' => 'Copy in progress', 'word' => 'uploading', 'colour' => $p['blue']];
+      case 'missing':
+        return ['svg' => "<svg width='$px' height='$px' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5' fill='{$p['amber']}'/></svg>",
+                'tip' => 'No backup copy yet - this target is configured but nothing has been uploaded to it',
+                'word' => 'never backed up', 'colour' => $p['amber']];
+      case 'unknown':
+        return ['svg' => "<svg width='$px' height='$px' viewBox='0 0 12 12'><circle cx='6' cy='6' r='4.3' fill='none' stroke='{$p['grey']}' stroke-width='1.4' stroke-dasharray='2 2'/></svg>",
+                'tip' => 'Not checked since boot', 'word' => 'not checked', 'colour' => $p['grey']];
+      default:
+        return ['svg' => "<svg width='$px' height='$px' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5' fill='{$p['pale']}'/></svg>",
+                'tip' => 'Not configured - this dataset is not meant to go to this cloud',
+                'word' => 'not configured', 'colour' => $p['grey']];
+    }
+  }
+}
+
+if (!function_exists('bo_row_state')) {
+  /* A dataset's overall state, for the status dot in front of its name. Lets you
+     spot the problem rows before reading any provider column. */
+  function bo_row_state($r) {
+    if ($r['targets'] < 1) return 'na';
+    $ok = 0; $half = 0; $miss = 0;
+    foreach ($r['cells'] as $c) {
+      $s = $c['state'] ?? 'na';
+      if ($s === 'ok')      $ok++;
+      if ($s === 'syncing') $half++;
+      if ($s === 'missing') $miss++;
+    }
+    if ($ok === $r['targets']) return 'ok';
+    if ($miss > 0 && $ok === 0 && $half === 0) return 'missing';
+    if ($miss > 0) return 'missing';
+    if ($half > 0) return 'syncing';
+    return 'unknown';
+  }
+}
+
 if (!function_exists('bo_render')) {
+  /* Full-page overview.
+   *
+   * Deliberately NOT a row of KPI cards. Those read as a dashboard but earn
+   * little: "5 datasets / 2 missing / 60% health" still leaves you looking at the
+   * table to find out which two. The page has a whole screen, so it spends it on
+   * the three facts worth stating outright, the transfer in its own section, and
+   * then the datasets - with the same dots, colours, wording and provider order as
+   * the tile.
+   *
+   * Timestamps are mostly gone from the surface. Healthy / uploading / missing is
+   * what you want at a glance; the exact time matters only when something is
+   * wrong, so it lives in the expansion and the tooltip.
+   */
   function bo_render() {
     $st = bo_state();
-    $h  = function($s) { return htmlspecialchars((string)$s, ENT_QUOTES); };
+    $q  = bo_score($st);
+    $p  = bo_pal();
+    $h  = function ($s) { return htmlspecialchars((string)$s, ENT_QUOTES); };
 
-    // amber softened from #d97706, which was very saturated for a warning state
-    $green = '#16a34a'; $red = '#dc2626'; $amber = '#b45309'; $blue = '#2563eb';
-    $grey = '#94a3b8'; $purple = '#7c3aed';
-    $line = '1px solid var(--bo-border)';
+    $nMissing = count($st['gaps']);
+    $scol = $q['pct'] >= 90 ? $p['green'] : ($q['pct'] >= 60 ? $p['amber'] : $p['red']);
 
-    $nGaps = count($st['gaps']);
-    $attention = $nGaps > 0 || $st['rl_errors'] > 0;
-
-    /* ---- header ---- */
-    $pill = $attention
-      ? "<span class='bo-pill bo-pill-warn'>" . bo_icon('alert', 14, $amber) . " Attention Required</span>"
-      : "<span class='bo-pill bo-pill-ok'>" . bo_icon('check', 14, $green) . " All Protected</span>";
+    $cloudLabel = ['g' => 'Google', 'd' => 'Dropbox', 'm' => 'Mail.ru'];
+    $cloudFull  = ['g' => 'Google Drive', 'd' => 'Dropbox', 'm' => 'mail.ru'];
+    $cloudTool  = ['g' => 'Duplicacy', 'd' => 'rclone', 'm' => 'Duplicacy'];
 
     $out = "<div class='bo-wrap'>";
+
+    /* ---- header ---- */
+    $pill = $nMissing > 0
+      ? "<span class='bo-pill bo-pill-warn'>" . bo_icon('alert', 14, $p['amber']) . " $nMissing target"
+        . ($nMissing > 1 ? 's' : '') . " missing</span>"
+      : "<span class='bo-pill bo-pill-ok'>" . bo_icon('check', 14, $p['green']) . " All protected</span>";
+
     $out .= "<div class='bo-head'>"
-          . "<div class='bo-brandmark'>" . bo_icon('cloud', 26, $blue) . "</div>"
-          . "<div class='bo-titles'><div class='bo-title'>Backup</div>"
-          . "<div class='bo-sub'>Backup overview</div></div>"
+          . "<div class='bo-brandmark'>" . bo_icon('shield', 24, $p['blue']) . "</div>"
+          . "<div class='bo-titles'><div class='bo-title'>Backup Overview</div>"
+          . "<div class='bo-sub'>Coverage across " . count($st['rows']) . " datasets and three clouds</div></div>"
           . $pill
-          . "<div class='bo-head-actions'>"
-          . "<button type='button' class='bo-btn' onclick='boRefresh(true)'>"
-          . bo_icon('refresh', 14, 'currentColor') . " Refresh now</button>"
+          . "<div class='bo-head-actions'><button type='button' class='bo-btn' onclick='boRefresh()'>"
+          . bo_icon('refresh', 14, 'currentColor') . " Refresh</button></div></div>";
+
+    /* ---- the three facts, and the score ---- */
+    [$nextTs, $nextWhat] = bo_next_run();
+    $facts = [
+      ['icon' => 'check', 'colour' => $st['newest'] ? $p['green'] : $p['grey'],
+       'label' => 'Last successful backup', 'value' => bo_when($st['newest'])],
+      ['icon' => 'refresh', 'colour' => $p['grey'],
+       'label' => 'Coverage last checked', 'value' => $h($st['cov_updated'])],
+      ['icon' => 'clock', 'colour' => $p['grey'],
+       'label' => 'Next scheduled run', 'value' => bo_when($nextTs) . " <span class='bo-dim'>" . $h($nextWhat) . "</span>"],
+    ];
+
+    $bits = [];
+    if ($q['full'])    $bits[] = "<span style='color:{$p['green']}'>{$q['full']} full</span>";
+    if ($q['syncing']) $bits[] = "<span style='color:{$p['green']}'>{$q['syncing']} syncing</span>";
+    if ($q['partial']) $bits[] = "<span style='color:{$p['amber']}'>{$q['partial']} partial</span>";
+    if ($q['none'])    $bits[] = "<span style='color:{$p['red']}'>{$q['none']} none</span>";
+
+    $out .= "<div class='bo-summary'><div class='bo-facts'>";
+    foreach ($facts as $f) {
+      $out .= "<div class='bo-fact'>" . bo_icon($f['icon'], 15, $f['colour'])
+            . "<span class='bo-fact-l'>" . $f['label'] . "</span>"
+            . "<span class='bo-fact-v'>" . $f['value'] . "</span></div>";
+    }
+    $out .= "</div><div class='bo-scorebox'>"
+          . "<div class='bo-score-l'>Protection score</div>"
+          . "<div class='bo-score-row'>"
+          . "<div class='bo-score-bar'><i style='width:{$q['pct']}%;background:$scol'></i></div>"
+          . "<div class='bo-score-n' style='color:$scol'>{$q['pct']}%</div></div>"
+          . "<div class='bo-score-b'>" . implode(" &#183; ", $bits) . "</div>"
           . "</div></div>";
 
-    $out .= "<div class='bo-lastok'>Last successful backup: <b>" . bo_when($st['newest']) . "</b>"
-          . ($st['newest'] ? " <span class='bo-ok-tick'>" . bo_icon('check', 14, $green) . "</span>" : '')
-          . "</div>";
-
-    /* ---- stat cards ---- */
-    $cards = [
-      ['n' => count($st['rows']), 'unit' => '',  'label' => 'Datasets',        'sub' => 'Configured',
-       'icon' => 'shield', 'col' => $green],
-      ['n' => $nGaps,            'unit' => '',  'label' => 'Missing Backups', 'sub' => $nGaps ? 'Need attention' : 'None',
-       'icon' => 'alert',  'col' => $nGaps ? $amber : $green],
-      ['n' => ($st['act'] ? 1 : 0), 'unit' => '', 'label' => 'Running',       'sub' => $st['act'] ? 'Transfer in progress' : 'Idle',
-       'icon' => 'sync',   'col' => $st['act'] ? $blue : $grey],
-      ['n' => bo_bytes($st['total_bytes']), 'unit' => '', 'label' => 'Total Data', 'sub' => 'Across all datasets',
-       'icon' => 'db',     'col' => $purple],
-      ['n' => $st['health'], 'unit' => '%', 'label' => 'Overall Health',
-       'sub' => $st['health'] >= 90 ? 'Good' : ($st['health'] >= 70 ? 'Fair' : 'Poor'),
-       'icon' => 'check',  'col' => $st['health'] >= 90 ? $green : ($st['health'] >= 50 ? $amber : $red)],
-    ];
-    $out .= "<div class='bo-cards'>";
-    foreach ($cards as $c) {
-      $out .= "<div class='bo-card'>"
-            . "<div class='bo-card-ico' style='background:" . $c['col'] . "1a'>" . bo_icon($c['icon'], 20, $c['col']) . "</div>"
-            . "<div><div class='bo-card-n' style='color:" . $c['col'] . "'>" . $h($c['n'])
-            . ($c['unit'] ? "<span class='bo-card-u'>" . $h($c['unit']) . "</span>" : '') . "</div>"
-            . "<div class='bo-card-l'>" . $h($c['label']) . "</div>"
-            . "<div class='bo-card-s'>" . $h($c['sub']) . "</div></div></div>";
-    }
-    $out .= "</div>";
-
-    /* ---- current activity ---- */
+    /* ---- current transfer, its own section ---- */
     if ($st['act']) {
-      $a = $st['act'];
+      $a   = $st['act'];
       $pct = max(0, min(100, $a['pct']));
-      $bytes = ($a['done'] !== '' && $a['total'] !== '') ? $a['done'] . ' / ' . $a['total'] : '';
-
-      /* Every volatile figure carries an id so the 1s poll can patch text in
-         place. Replacing the whole panel that often would fight the browser for
-         layout and kill any tooltip the moment you hovered it. */
+      $file = '';
+      if (!empty($a['inflight']) && is_array($a['inflight'])) {
+        $file = $a['inflight'][0]['name'] ?? '';
+      }
       $out .= "<div class='bo-act' id='bo-act'>"
-            . "<div class='bo-act-ico bo-spin'>" . bo_icon('sync', 20, $blue) . "</div>"
-            . "<div class='bo-act-txt'><div class='bo-act-t'>Current Activity</div>"
-            . "<div class='bo-act-s'>" . $h($a['what']) . " <b id='bo-act-name'>" . $h($a['name']) . "</b> to "
-            . $h($a['target']) . " <span class='bo-tool'>&#183; " . $h($a['tool']) . "</span></div></div>"
-            . "<div class='bo-act-bar'><div class='bo-bar'>"
-            . "<div class='bo-bar-fill' id='bo-bar' style='width:{$pct}%'></div>"
-            . "<div class='bo-bar-lbl' id='bo-pct'>" . round($pct) . "%</div></div>"
-            . "<div class='bo-act-files' id='bo-inflight'>" . $h(bo_inflight_text($a)) . "</div>"
+            . "<div class='bo-act-head'>"
+            . "<span class='bo-spin'>" . bo_icon('sync', 17, $p['blue']) . "</span>"
+            . "<b>Currently transferring</b>"
+            . "<span class='bo-act-what'><b id='bo-act-name'>" . $h($a['name']) . "</b> &#8594; "
+            . $h($a['target']) . " <span class='bo-dim'>" . $h($a['tool']) . "</span></span>"
             . "</div>"
+            . "<div class='bo-act-file' id='bo-file'>" . $h($file) . "</div>"
+            . "<div class='bo-bar'><div class='bo-bar-fill' id='bo-bar' style='width:{$pct}%'></div>"
+            . "<div class='bo-bar-lbl' id='bo-pct'>" . round($pct) . "%</div></div>"
             . "<div class='bo-act-stats'>"
-            . "<span>" . bo_icon('files', 15, $grey) . " <span id='bo-bytes'>" . $h($bytes) . "</span></span>"
-            . "<span>" . bo_icon('pulse', 15, $green) . " <span id='bo-rate'>" . $h($a['rate']) . "</span></span>"
-            . "<span>" . bo_icon('clock', 15, $grey) . " ETA <span id='bo-eta'>" . $h($a['eta'] !== '' ? $a['eta'] : '?') . "</span></span>"
+            . "<span>" . bo_icon('files', 15, $p['grey']) . " <span id='bo-bytes'>"
+            . $h(trim($a['done'] . ' / ' . $a['total'], ' /')) . "</span></span>"
+            . "<span>" . bo_icon('pulse', 15, $p['green']) . " <span id='bo-rate'>" . $h($a['rate']) . "</span></span>"
+            . "<span>" . bo_icon('clock', 15, $p['grey']) . " ETA <span id='bo-eta'>"
+            . $h($a['eta'] !== '' ? $a['eta'] : '?') . "</span></span>"
             . "</div></div>";
-    } else {
-      $out .= "<div class='bo-act bo-act-idle' id='bo-act'>"
-            . "<div class='bo-act-ico'>" . bo_icon('check', 20, $green) . "</div>"
-            . "<div class='bo-act-txt'><div class='bo-act-t'>Current Activity</div>"
-            . "<div class='bo-act-s'>Nothing transferring right now</div></div></div>";
     }
 
-    /* ---- dataset table ---- */
+    /* ---- datasets ---- */
     $out .= "<div class='bo-table-scroll'><div class='bo-table'>";
-    /* Header cells stack provider over tool. Side by side, the grey tool name
-       read as a column of its own - the grid gap put as much space between
-       "Google Drive" and "Duplicacy" as between two real columns. */
-    $hcol = function($brand, $name, $tool) {
-      return "<div><span class='bo-hcol'>" . $brand . "<span>" . $name . "</span></span>"
-           . "<span class='bo-tool2'>" . $tool . "</span></div>";
-    };
-    $out .= "<div class='bo-tr bo-th'>"
-          . "<div><span class='bo-hcol'><span>Dataset</span></span></div>"
-          . $hcol(bo_brand('g'), 'Google Drive', 'Duplicacy')
-          . $hcol(bo_brand('d'), 'Dropbox',      'rclone')
-          . $hcol(bo_brand('m'), 'Mail.ru',      'Duplicacy')
-          . "<div><span class='bo-hcol'><span>Protection</span></span></div>"
-          . "<div><span class='bo-hcol'><span>Last Backup</span></span></div>"
-          . "<div><span class='bo-hcol'><span>Size</span></span></div>"
-          . "<div></div></div>";  // spacer: absorbs leftover width, see .bo-tr
+    $out .= "<div class='bo-tr bo-th'><div>Dataset</div>";
+    foreach (['g', 'd', 'm'] as $sk) {
+      $out .= "<div><span class='bo-hcol'>" . bo_brand($sk, 15)
+            . "<span>" . $cloudLabel[$sk] . "</span></span>"
+            . "<span class='bo-tool2'>" . $cloudTool[$sk] . "</span></div>";
+    }
+    $out .= "<div><span class='bo-hcol'><span>History</span></span>"
+          . "<span class='bo-tool2'>last 5 checks</span></div>"
+          . "<div></div></div>";
 
     foreach ($st['rows'] as $r) {
-      $out .= "<div class='bo-tr'>";
-      $out .= "<div class='bo-ds'><span class='bo-ds-ico' style='background:" . $r['tint'] . "1a'>"
-            . bo_icon($r['icon'], 16, $r['tint']) . "</span><b>" . $h($r['title']) . "</b></div>";
+      $rs  = bo_row_state($r);
+      $rm  = bo_mark($rs, 12);
+      $did = 'bo-d-' . preg_replace('/[^a-z0-9]+/i', '-', $r['share']);
+
+      $out .= "<div class='bo-tr bo-row' onclick=\"boToggle('$did')\">";
+      $out .= "<div class='bo-ds'>"
+            . "<span title='" . $h(ucfirst($rm['word'])) . "'>" . $rm['svg'] . "</span>"
+            . "<span class='bo-ds-ico' style='background:" . $r['tint'] . "1a'>"
+            . bo_icon($r['icon'], 15, $r['tint']) . "</span>"
+            . "<span class='bo-dsn'><b>" . $h($r['title']) . "</b>"
+            . "<span class='bo-dssz'>" . bo_bytes($r['bytes']) . "</span></span></div>";
 
       foreach (['g', 'd', 'm'] as $sk) {
         $c = $r['cells'][$sk];
-        switch ($c['state']) {
-          case 'ok':
-            $tip = $h(($c['tool'] === 'rclone' ? 'Files mirrored' : 'Snapshot' . ($c['rev'] !== '' ? " revision {$c['rev']}" : ''))
-                    . ' - ' . bo_when($c['ts']));
-            $out .= "<div class='bo-cell' title='$tip'>" . bo_icon('check', 15, $green)
-                  . " <span style='color:$green'>" . bo_ago($c['ts']) . "</span></div>";
-            break;
-          case 'syncing':
-            $out .= "<div class='bo-cell' title='" . $h(round($c['pct'], 1)) . "% of bytes present - transfer in progress'>"
-                  . bo_icon('sync', 15, $blue) . " <span style='color:$blue'>Syncing ("
-                  . round($c['pct']) . "%)</span></div>";
-            break;
-          case 'missing':
-            /* Amber warning, not a red error. Nothing is broken here - the target
-               is configured and simply has not been uploaded to yet. Red is
-               reserved for something that failed. */
-            $out .= "<div class='bo-cell' title='No backup copy yet - this target is configured but nothing has been uploaded to it'>"
-                  . bo_icon('alert', 15, $amber) . " <span style='color:$amber'>No copy yet</span></div>";
-            break;
-          case 'unknown':
-            $out .= "<div class='bo-cell' title='Not checked since boot'>"
-                  . bo_icon('clock', 15, $grey) . " <span style='color:$grey'>Unchecked</span></div>";
-            break;
-          default:
-            /* Deliberately not a target. The mockup called this "Missing", but
-               labelling a decision as a failure trains you to ignore the red. */
-            $out .= "<div class='bo-cell' title='Not a target by design'>"
-                  . bo_icon('dash', 15, $grey) . " <span style='color:$grey'>Not a target</span></div>";
+        $state = $c['state'] ?? 'na';
+        $m = bo_mark($state, 13);
+
+        /* State in words, not a timestamp. The exact time only matters when
+           something is wrong, and then it is one click or one hover away. */
+        $word = $m['word'];
+        if ($state === 'syncing') $word = 'uploading ' . round($c['pct']) . '%';
+
+        $tip = $cloudFull[$sk] . " - " . $cloudTool[$sk] . "\n";
+        if ($state === 'ok') {
+          $tip .= "Last backup: " . strip_tags(bo_when($c['ts']));
+          if (($c['rev'] ?? '') !== '') $tip .= " (revision {$c['rev']})";
+        } elseif ($state === 'syncing') {
+          $tip .= "Uploading now: " . round($c['pct']) . "% of bytes present";
+        } elseif ($state === 'missing') {
+          $tip .= "Never backed up\nTarget is configured but has received nothing yet";
+        } else {
+          $tip .= $m['tip'];
         }
+        $tip .= "\nSource: /mnt/user/" . $r['share'];
+
+        $out .= "<div class='bo-cell' title='" . $h($tip) . "'>" . $m['svg']
+              . " <span style='color:" . $m['colour'] . "'>" . $h($word) . "</span></div>";
       }
 
-      $full = $r['targets'] > 0 && $r['ok'] === $r['targets'];
-      $anySync = false;
-      foreach ($r['cells'] as $c) if (($c['state'] ?? '') === 'syncing') $anySync = true;
-      $pcol = $full ? $green : ($anySync ? $blue : $amber);
-      $pw   = $r['targets'] > 0 ? (int)round($r['ok'] * 100 / $r['targets']) : 0;
-      $ptxt = $anySync && !$full ? 'Syncing' : "{$r['ok']} / {$r['targets']}";
-      $out .= "<div class='bo-prot'><span class='bo-prot-b' style='color:$pcol;background:" . $pcol . "1a'>"
-            . $h($ptxt) . "</span><span class='bo-prot-bar'><i style='width:{$pw}%;background:$pcol'></i></span></div>";
+      $out .= "<div class='bo-cell'>" . bo_sparkline($r['share'], 15, 5) . "</div>";
+      $out .= "<div class='bo-chev'>" . bo_icon('chev', 14, $p['grey']) . "</div>";
+      $out .= "</div>";
 
-      $out .= "<div class='bo-cell'>" . bo_when($r['last']) . "</div>";
-      $out .= "<div class='bo-cell bo-size' title='" . number_format($r['files']) . " files'>"
-            . bo_bytes($r['bytes']) . "</div>";
-      $out .= "<div></div>";  // spacer, matching the header
+      /* expansion: the per-cloud story, same shape as the tile */
+      $out .= "<div class='bo-det' id='$did'>";
+      foreach (['g', 'd', 'm'] as $sk) {
+        if (!isset($r['cells'][$sk])) continue;
+        $c = $r['cells'][$sk];
+        $state = $c['state'] ?? 'na';
+        $m = bo_mark($state, 12);
+
+        if ($state === 'ok') {
+          $detail = bo_when($c['ts']) . (($c['rev'] ?? '') !== '' ? " <span class='bo-dim'>revision {$c['rev']}</span>" : '');
+        } elseif ($state === 'syncing') {
+          $detail = "uploading, " . round($c['pct']) . "% of bytes present";
+        } elseif ($state === 'missing') {
+          $detail = "never backed up";
+        } else {
+          $detail = $m['word'];
+        }
+
+        $out .= "<div class='bo-detr'>"
+              . "<span class='bo-detc'>" . $m['svg'] . " " . $h($cloudFull[$sk])
+              . " <span class='bo-dim'>" . $h($cloudTool[$sk]) . "</span></span>"
+              . "<span class='bo-dets' style='color:" . $m['colour'] . "'>" . $detail . "</span></div>";
+      }
+      $out .= "<div class='bo-detr bo-detp'>"
+            . "<span class='bo-detc'>/mnt/user/" . $h($r['share']) . "</span>"
+            . "<span class='bo-dets'>" . number_format($r['files']) . " files &#183; "
+            . bo_bytes($r['bytes']) . "</span></div>";
       $out .= "</div>";
     }
     $out .= "</div></div>";
 
-    /* ---- needs attention ---- */
-    $items = [];
-    $cloudName = ['g' => 'Google Drive', 'd' => 'Dropbox', 'm' => 'mail.ru'];
+    /* ---- attention, as a task list ---- */
+    $tasks = [];
     foreach ($st['gaps'] as $g) {
-      $items[] = "<b>" . $h($g['share']) . ":</b> no copy on " . $h($cloudName[$g['cloud']])
-               . " <span class='bo-tool'>(" . $h($g['tool']) . ")</span>";
-    }
-    if ($st['rl_errors'] > 0) {
-      $items[] = "<b>Dropbox mirror:</b> " . (int)$st['rl_errors'] . " error"
-               . ($st['rl_errors'] > 1 ? 's' : '') . " in today's sync log";
+      $cmd = $g['tool'] === 'rclone'
+        ? "/mnt/user/appdata/scripts/rclone-dropbox-sync.sh"
+        : "cd /mnt/user/" . strtolower(str_replace(' ', '-', $g['share'])) . " && duplicacy backup -storage "
+          . ($g['cloud'] === 'm' ? 'mailru' : 'gdrive');
+      $tasks[] = [
+        'title' => $g['share'],
+        'what'  => "No copy on " . $cloudFull[$g['cloud']],
+        'why'   => "The target is configured. Nothing has been uploaded to it yet.",
+        'cmd'   => $cmd,
+      ];
     }
     foreach ($st['rows'] as $r) {
       if ($r['targets'] === 1) {
-        $items[] = "<b>" . $h($r['title']) . ":</b> only one cloud target configured";
+        $tasks[] = [
+          'title' => $r['title'],
+          'what'  => "Only one cloud target configured",
+          'why'   => "A single copy off-site means one provider problem is a total loss.",
+          'cmd'   => '',
+        ];
       }
     }
-    if ($items) {
-      $out .= "<div class='bo-attn'><div class='bo-attn-h'>" . bo_icon('alert', 17, $amber)
-            . " Needs Attention</div><div class='bo-attn-g'>";
-      foreach ($items as $i) $out .= "<div class='bo-attn-i'><i></i><span>$i</span></div>";
-      $out .= "</div></div>";
+    if ($st['rl_errors'] > 0) {
+      $tasks[] = [
+        'title' => 'Dropbox mirror',
+        'what'  => $st['rl_errors'] . " error" . ($st['rl_errors'] > 1 ? 's' : '') . " in today's sync log",
+        'why'   => "Individual files failed to transfer; the run itself continued.",
+        'cmd'   => "tail -50 /mnt/user/appdata/rclone/logs/dropbox-sync-" . date('Y-m-d') . ".log",
+      ];
+    }
+
+    if ($tasks) {
+      $out .= "<div class='bo-attn'><div class='bo-attn-h'>" . bo_icon('alert', 16, $p['amber'])
+            . " Needs attention <span class='bo-dim'>" . count($tasks) . " item"
+            . (count($tasks) > 1 ? 's' : '') . "</span></div>";
+      foreach ($tasks as $t) {
+        $out .= "<div class='bo-task'>"
+              . "<div class='bo-task-b'>" . bo_icon('alert', 14, $p['amber']) . "</div>"
+              . "<div class='bo-task-t'><div class='bo-task-h'>" . $t['title']
+              . " <span class='bo-dim'>&#183; " . $t['what'] . "</span></div>"
+              . "<div class='bo-task-w'>" . $t['why'] . "</div>"
+              /* The command, not a button. A web endpoint that runs backups as
+                 root is a security surface this deliberately does not have, so the
+                 page hands you the exact thing to run instead of pretending. */
+              . ($t['cmd'] !== '' ? "<code class='bo-task-c'>" . $h($t['cmd']) . "</code>" : "")
+              . "</div></div>";
+      }
+      $out .= "</div>";
     } else {
-      $out .= "<div class='bo-allok'>" . bo_icon('check', 17, $green)
+      $out .= "<div class='bo-allok'>" . bo_icon('check', 17, $p['green'])
             . " Every configured target holds a copy</div>";
     }
 
-    /* ---- footer ---- */
-    [$nextTs, $nextWhat] = bo_next_run();
-    $out .= "<div class='bo-foot'><span>" . bo_icon('clock', 14, $grey) . " Next scheduled run: <b>"
-          . bo_when($nextTs) . "</b> &#183; " . $h($nextWhat) . "</span>"
-          . "<span class='bo-foot-r'>coverage checked " . $h($st['cov_updated'])
-          . " &#183; refreshing in <b id='bo-count'>60</b>s</span></div>";
+    $out .= "<div class='bo-foot'><span>Live figures from rclone; coverage from the 6-hourly check"
+          . "</span><span>refreshing in <b id='bo-count'>30</b>s</span></div>";
 
-    $out .= "</div>";
-    return $out;
+    return $out . "</div>";
   }
 }
-
 
 if (!function_exists('bo_score')) {
   /* Backup score, and the per-dataset breakdown behind it.

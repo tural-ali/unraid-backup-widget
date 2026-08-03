@@ -230,3 +230,37 @@ sends a boolean `inside` flag and the script contains no comparisons at all.
 The lesson generalises: the check must test the actual invariant. Counting `&&` tested one
 instance of the rule rather than the rule, which is "the fragment parses as XML". That is now
 what gets asserted, by parsing it.
+
+## Full page rebuilt (2026.08.07)
+
+**KPI cards removed.** Five cards reading `5 datasets / 2 missing / 1 running / 2.19 TB /
+60% health` looked like a dashboard but earned little: after reading them you still had to
+scan the table to learn *which* two were missing. They occupied the most valuable strip of a
+page that has a whole screen to spend.
+
+**What replaced them:** three facts stated outright - last successful backup, when coverage
+was last checked, next scheduled run - beside the protection score as a bar. Those are the
+only three numbers that mean something without a follow-up question.
+
+**The transfer got its own band.** It is the one thing on the page that changes second to
+second, and it was previously a row among rows.
+
+**The table now mirrors the tile:** status dot, dataset, three provider columns in words, and
+history. Clicking a row expands the per-cloud detail exactly as the tile does.
+
+**Timestamps left the surface.** Columns say `protected`, `uploading 43%`, `never backed up`.
+The precise time only matters when something is wrong, so it lives in the expansion and the
+tooltip. The page reads calmer for it, and "3 hours ago" was never the question.
+
+**One definition of a status mark.** `bo_mark()` and `bo_pal()` moved into overview.php and the
+tile's `bw_mark()` now delegates to them. Both surfaces carrying their own copy of five dots is
+precisely how a page and a tile end up disagreeing about what green means.
+
+**The attention panel is a task list with commands, not buttons.** Each item names the dataset,
+what is missing, why it matters, and the exact command to fix it, selectable in one click. A
+"Run now" button would need a web endpoint that executes backup jobs as root - a materially
+different security surface from one that reads status files - so the page hands over the
+command instead of pretending to be a control panel.
+
+**Rejected: an "Open logs" link.** Same reasoning. Streaming root-readable logs through the web
+UI is another surface; the task list gives the `tail` command for the sync log instead.

@@ -46,6 +46,13 @@ Every `.ini` lives in `/var/local/emhttp/`, which is tmpfs. That is deliberate: 
 caches, and a stale cache surviving a reboot would be worse than an empty one. The
 renderers treat a missing key as *unknown*, never as *covered*.
 
+## One interpreter, one palette, one set of marks
+
+`bo_state()` decides what is true. `bo_pal()` and `bo_mark()` decide how it looks. All three
+live in overview.php and both surfaces call them - the tile's `bw_mark()` is a delegating
+wrapper kept only for name compatibility. Two surfaces with their own copies of the same five
+dots is how a page and a tile end up disagreeing about what green means.
+
 ## bo_state() is the only interpreter
 
 Both renderers call it and neither does any interpretation of its own. This is the single

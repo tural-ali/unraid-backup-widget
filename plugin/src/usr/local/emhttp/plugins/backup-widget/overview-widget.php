@@ -36,26 +36,11 @@
 require_once '/usr/local/emhttp/plugins/backup-widget/overview.php';
 
 if (!function_exists('bw_mark')) {
-  function bw_mark($state, $green, $amber, $blue, $grey) {
-    switch ($state) {
-      case 'ok':
-        return ['svg' => "<svg width='13' height='13' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5' fill='$green'/></svg>",
-                'tip' => 'Backed up'];
-      case 'syncing':
-        return ['svg' => bo_icon('sync', 13, $blue), 'tip' => 'Copy in progress'];
-      case 'missing':
-        return ['svg' => "<svg width='13' height='13' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5' fill='$amber'/></svg>",
-                'tip' => 'No backup copy yet - this target is configured but nothing has been uploaded to it'];
-      case 'unknown':
-        return ['svg' => "<svg width='13' height='13' viewBox='0 0 12 12'><circle cx='6' cy='6' r='4.3' fill='none' stroke='$grey' stroke-width='1.4' stroke-dasharray='2 2'/></svg>",
-                'tip' => 'Not checked since boot'];
-      default:
-        /* Filled pale dot, GitHub-Actions style. A hollow ring read as
-           "inactive" and a dash read as absent-data; a greyed member of the same
-           dot family reads as a state in the series, which is what it is. */
-        return ['svg' => "<svg width='13' height='13' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5' fill='#cbd5e1'/></svg>",
-                'tip' => 'Not configured - this dataset is not meant to go to this cloud'];
-    }
+  /* Delegates to bo_mark() in overview.php. The tile used to carry its own copy of
+     these five dots, which is exactly how a page and a tile end up disagreeing
+     about what green means. One definition, two callers. */
+  function bw_mark($state, $green = null, $amber = null, $blue = null, $grey = null) {
+    return bo_mark($state, 13);
   }
 }
 
