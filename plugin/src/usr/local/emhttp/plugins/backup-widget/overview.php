@@ -465,6 +465,13 @@ if (!function_exists('bo_live_json')) {
           'rate'     => bo_rate($r['speed']),
           'eta'      => bo_dur($r['eta']),
           'inflight' => bo_inflight_text(['inflight' => $r['files'], 'files' => $r['xfers']]),
+          /* Single filename for the tile's "Uploading ..." line: during a
+             multi-day seed the percentage barely moves minute to minute, but a
+             filename turning over is unmistakable proof it is alive. */
+          'file'     => (function($f) {
+                          $n = $f[0]['name'] ?? '';
+                          return strlen($n) > 30 ? substr($n, 0, 27) . '...' : $n;
+                        })($r['files']),
           'errors'   => $r['errors'],
         ];
       } else {
@@ -673,6 +680,142 @@ if (!function_exists('bo_render')) {
 
     $out .= "</div>";
     return $out;
+  }
+}
+
+
+if (!function_exists('bo_score')) {
+  /* Backup score, and the per-dataset breakdown behind it.
+   *
+   * The first version scored "datasets where every target holds a copy", which
+   * read 40% for an estate in decent shape: two datasets perfect, two missing
+   * only their optional third copy, one mid-upload. 40% says "almost everything
+   * is broken", and that was not what was happening. A metric that overstates
+   * danger gets ignored exactly like one that understates it.
+   *
+   * Scored per dataset and averaged, so a dataset with three targets is not
+   * punished three times for one absence, and an upload in progress earns half
+   * credit because a copy is actively being produced.
+   */
+  function bo_score($st) {
+    $full = 0; $partial = 0; $syncing = 0; $none = 0; $sum = 0.0; $n = 0;
+
+    foreach ($st['rows'] as $r) {
+      if ($r['targets'] < 1) continue;
+      $n++;
+      $ok = 0; $half = 0;
+      foreach ($r['cells'] as $c) {
+        $s = $c['state'] ?? 'na';
+        if ($s === 'ok')      $ok++;
+        if ($s === 'syncing') $half++;
+      }
+      $sum += ($ok + 0.5 * $half) / $r['targets'];
+
+      if ($ok === $r['targets'])  $full++;
+      elseif ($half > 0)          $syncing++;
+      elseif ($ok > 0)            $partial++;
+      else                        $none++;
+    }
+
+    return ['pct' => $n > 0 ? (int)round($sum * 100 / $n) : 0, 'full' => $full,
+            'partial' => $partial, 'syncing' => $syncing, 'none' => $none, 'total' => $n];
+  }
+}
+
+if (!function_exists('bo_history_path')) {
+  function bo_history_path() { return '/boot/config/plugins/backup-widget/history.tsv'; }
+}
+
+if (!function_exists('bo_record_history')) {
+  /* Append one sample per dataset. Called by the 6-hourly collector.
+   *
+   * On flash, because history that resets at every reboot is not history. Four
+   * writes a day of a few hundred bytes is nothing against flash wear, and the
+   * file is trimmed so it cannot grow without bound.
+   *
+   * Answers a question no snapshot can: is this dataset reliably healthy, or
+   * does it fail every other run?
+   */
+  function bo_record_history() {
+    $st = bo_state();
+    $p  = bo_history_path();
+    if (!is_dir(dirname($p))) return false;
+
+    $now = time();
+    $lines = [];
+    foreach ($st['rows'] as $r) {
+      if ($r['targets'] < 1) continue;
+      $ok = 0; $half = 0;
+      foreach ($r['cells'] as $c) {
+        $s = $c['state'] ?? 'na';
+        if ($s === 'ok')      $ok++;
+        if ($s === 'syncing') $half++;
+      }
+      $state = ($ok === $r['targets']) ? 'full'
+             : ($half > 0 ? 'syncing' : ($ok > 0 ? 'partial' : 'none'));
+      $lines[] = "$now\t{$r['share']}\t$state";
+    }
+    if (!$lines) return false;
+
+    file_put_contents($p, implode("\n", $lines) . "\n", FILE_APPEND | LOCK_EX);
+    @chmod($p, 0600);
+
+    /* Keep the tail only: 40 samples per dataset is ample for a sparkline and
+       bounds the file at a few KB. */
+    $all = @file($p, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+    $cap = 40 * max(1, count($lines));
+    if (count($all) > $cap) {
+      file_put_contents($p, implode("\n", array_slice($all, -$cap)) . "\n", LOCK_EX);
+    }
+    return true;
+  }
+}
+
+if (!function_exists('bo_history')) {
+  /* Last $keep samples per dataset, oldest first. */
+  function bo_history($keep = 14) {
+    static $cache = null;
+    if ($cache !== null) return $cache;
+    $cache = [];
+    foreach (@file(bo_history_path(), FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $l) {
+      $p = explode("\t", $l);
+      if (count($p) < 3) continue;
+      $cache[$p[1]][] = ['ts' => (int)$p[0], 'state' => $p[2]];
+    }
+    foreach ($cache as $k => $v) $cache[$k] = array_slice($v, -$keep);
+    return $cache;
+  }
+}
+
+if (!function_exists('bo_sparkline')) {
+  /* Compact run history. Bars rather than glyphs: a row of bars is legible at
+     3px wide where a row of ticks and crosses is not. Bar HEIGHT also encodes
+     state, so it survives monochrome and colour-blind readers. */
+  function bo_sparkline($share, $h = 13, $keep = 14) {
+    $rows = bo_history($keep)[$share] ?? [];
+    if (!$rows) {
+      return "<span class='bw-spk-none' title='No history yet - samples are recorded"
+           . " by the 6-hourly coverage check, so this fills in over about four days'>"
+           . "&#183;&#183;&#183;</span>";
+    }
+
+    $col = ['full' => '#16a34a', 'partial' => '#d97706', 'syncing' => '#2563eb', 'none' => '#dc2626'];
+    $w = 3; $gap = 1.4;
+    $tot = round(count($rows) * ($w + $gap));
+    $svg = "<svg width='$tot' height='$h' viewBox='0 0 $tot $h' role='img'"
+         . " aria-label='Recent backup history'>";
+    $x = 0;
+    foreach ($rows as $r) {
+      $c  = $col[$r['state']] ?? '#94a3b8';
+      $bh = $r['state'] === 'full' ? $h : ($r['state'] === 'syncing' ? (int)round($h * .66) : (int)round($h * .45));
+      $svg .= "<rect x='" . round($x, 1) . "' y='" . ($h - $bh) . "' width='$w' height='$bh' rx='1' fill='$c'/>";
+      $x += $w + $gap;
+    }
+    $svg .= "</svg>";
+
+    $last = end($rows);
+    $tip = count($rows) . " samples, newest " . date('d/m H:i', $last['ts']) . " (" . $last['state'] . ")";
+    return "<span title='" . htmlspecialchars($tip, ENT_QUOTES) . "'>$svg</span>";
   }
 }
 

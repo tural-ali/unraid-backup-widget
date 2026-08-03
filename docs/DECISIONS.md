@@ -117,3 +117,48 @@ Both need writing, and the `.plg` file list must name every file.
 verbose scope error but not the terser `missing_scope`, and reported success against a
 failure. A probe should exercise the operation and treat anything but a clean result as
 failure, not pattern-match known error strings.
+
+## Scoring (revised 2026.08.04)
+
+**First attempt: percentage of datasets where every target holds a copy.** It read 40% for an
+estate that was in decent shape - two datasets perfect, two missing only their optional third
+copy, one mid-upload. 40% says "almost everything is broken". A metric that overstates danger
+gets ignored exactly like one that understates it, so it was replaced.
+
+**Now: per-dataset coverage, averaged, with half credit for uploads in progress.** A dataset
+with three targets is no longer punished three times for one absence, and a copy actively
+being produced counts for something. The same estate scores 75%, which matches how it
+actually feels. The word breakdown next to the gauge - `2 full · 2 syncing · 1 partial` -
+carries the detail a single number cannot.
+
+**Rejected: weighting clouds by importance.** Tempting - the first copy matters more than the
+third - but any weighting is a judgement encoded as arithmetic, and it would need explaining
+every time someone asked why a number moved. Equal weight per target inside a dataset is at
+least predictable.
+
+## History sparkline
+
+A snapshot cannot answer "is this dataset reliably healthy, or does it fail every other
+run?" - and that is often the more useful question. Each 6-hourly coverage check now appends
+one sample per dataset to `history.tsv` on flash, and the tile draws the last 14 as bars.
+
+**On flash, not in RAM.** History that resets at every reboot is not history. Four writes a
+day of a few hundred bytes is nothing against flash wear, and the file is trimmed to 40
+samples per dataset.
+
+**Bar height encodes state as well as colour**, so the row is still readable in monochrome
+or to a colour-blind reader: full height for healthy, two thirds for syncing, under half for
+degraded.
+
+The sparkline shows `···` until samples exist. At a 6-hourly cadence a full 14-bar history
+takes about three and a half days to build, which is honest rather than backfilled with
+invented data.
+
+## Wording, second pass
+
+- **"Attention required" above the count.** Naming the state before the number reads faster
+  than a bare "2 missing backups".
+- **"backup targets missing"**, not "missing backups" - it is a target that lacks a copy, and
+  saying so avoids implying a backup was lost.
+- **A dash, not a hollow ring, for a cloud that is not a target.** An empty circle reads as
+  "inactive" or "off"; a dash reads as not-applicable, which is what it means.
