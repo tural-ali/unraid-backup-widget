@@ -66,13 +66,20 @@ bytes, health percentage, the list of missing backups, and the current activity.
 
 ## Cell states
 
-| State | Drawn as | Meaning |
-|---|---|---|
-| `ok` | filled green dot / timestamp | a copy exists, with its age |
-| `syncing` | blue sync arrows / percentage | a copy is being made right now |
-| `missing` | filled amber dot / "No copy yet" | configured target, nothing uploaded |
-| `unknown` | dashed grey ring | not checked since boot |
-| `na` | solid grey ring / "Not a target" | deliberately not sent here |
+All five come from `bo_mark()`, so the tile and the page draw them identically.
+
+| State | Mark | Word on the surface | Meaning |
+|---|---|---|---|
+| `ok` | filled green dot | `protected` | a copy exists |
+| `syncing` | blue sync arrows | `uploading 43%` | a copy is being made right now |
+| `missing` | filled amber dot | `never backed up` | configured target, nothing uploaded |
+| `unknown` | dashed grey ring | `not checked` | not checked since boot |
+| `na` | filled pale grey dot | `not configured` | deliberately not sent here |
+
+Words, not timestamps. The exact time a backup ran only matters once something is wrong, so
+it lives in the row expansion and the hover tooltip. Each dataset also carries an overall dot
+in front of its name (`bo_row_state()`) so the problem rows are visible before any provider
+column is read.
 
 `missing` is amber, not red. Nothing is broken - the target is configured and simply has
 not received data yet. Red is reserved for an actual failure, which keeps it meaningful.
@@ -114,7 +121,10 @@ The fast tick patches text nodes rather than rebuilding, because rebuilding at 1
 the browser for layout and dismisses any tooltip the moment it is hovered. The slow tick
 uses `DOMParser` + `replaceChildren` rather than assigning markup to an HTML sink.
 
-One consequence worth knowing: an expanded dataset row collapses on the 30s rebuild.
+Because the slow tick replaces every node, which rows are expanded must be held **outside**
+the DOM. Both surfaces keep it in a `window` object mirrored to `localStorage` and re-apply it
+after each rebuild. Storing it only in the nodes is what made rows collapse a few seconds
+after being opened.
 
 ## Unraid integration contract
 
@@ -127,10 +137,12 @@ because it is spliced into the dashboard's own table. Returning a
 `['name' => …, 'title' => …, 'body' => …]` array registers nothing, produces no error, and
 the tile silently does not appear.
 
-**Fragment character set.** The emitted tile fragment is parsed as XML by the deploy check,
-so the inline `<style>` and `<script>` bodies must contain no `<`, `>` or `&`. That rules
-out `&&` (use nested `if`s) and CSS child selectors like `a > b` (give the element a
-class).
+**Fragment character set.** The emitted tile fragment is parsed as XML, so the inline
+`<style>` and `<script>` bodies must contain no `<`, `>` or `&`. That rules out `&&` (use
+nested `if`s), CSS child selectors like `a > b` (give the element a class), and *any*
+comparison operator in JavaScript - `if (p >= 14)` broke this once. Where a comparison is
+needed, the endpoint sends a boolean instead. Assert the invariant by parsing the fragment as
+XML, not by grepping for known offenders.
 
 **tmpfs vs flash.** `/usr/local/emhttp/plugins/<name>/` is RAM and is what the webserver
 reads. `/boot/config/plugins/<name>/` is flash and is what survives a reboot. The `.plg`
