@@ -162,3 +162,36 @@ invented data.
   saying so avoids implying a backup was lost.
 - **A dash, not a hollow ring, for a cloud that is not a target.** An empty circle reads as
   "inactive" or "off"; a dash reads as not-applicable, which is what it means.
+
+## Polish pass (2026.08.05)
+
+**Dropped the "Attention required" headline.** Above a count that already names the problem it
+was pure redundancy, and the tile has no spare vertical room. The score label plus the count
+carries it.
+
+**Syncing is green in the breakdown, blue in the sparkline, and that inconsistency is
+deliberate.** The breakdown answers "is this healthy?" - a copy being actively produced is
+healthy, and blue reads as merely informational. The sparkline answers "what was the state at
+that sample?" - and mid-transfer is genuinely a different state from complete, which is the
+distinction the sparkline exists to draw.
+
+**One family of dots, GitHub-Actions style.** Filled green / blue sync arrows / filled amber /
+pale grey. A row of dots in different colours is read faster than a row of mixed glyphs. The
+not-configured state took three attempts: an exclamation mark read as "broken", a hollow ring
+read as "inactive", and a dash read as missing data. A greyed member of the same dot family
+reads as a state in the series, which is what it is.
+
+**Amber softened from `#d97706` to `#b45309`.** The brighter tone dominated a tile where it is
+only meant to draw the eye.
+
+**Rich native tooltips instead of more UI.** Each dot's `title` carries cloud, tool, last
+backup with revision, and source path across several lines. Hovering answers the question the
+expandable row was added for, without occupying any space.
+
+## Mistakes worth not repeating (continued)
+
+**A one-line comment swallowed the next statement.** A scripted edit appended `// softened...`
+to a line that continued `$blue = '#2563eb';`, putting the assignment inside the comment. The
+page still rendered - PHP treats the undefined variable as empty - so every blue element
+silently lost its colour with no error anywhere. Rendering successfully is not evidence of
+correctness; the check that caught it was grepping the OUTPUT for the expected colour.

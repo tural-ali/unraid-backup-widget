@@ -488,7 +488,8 @@ if (!function_exists('bo_render')) {
     $st = bo_state();
     $h  = function($s) { return htmlspecialchars((string)$s, ENT_QUOTES); };
 
-    $green = '#16a34a'; $red = '#dc2626'; $amber = '#d97706'; $blue = '#2563eb';
+    // amber softened from #d97706, which was very saturated for a warning state
+    $green = '#16a34a'; $red = '#dc2626'; $amber = '#b45309'; $blue = '#2563eb';
     $grey = '#94a3b8'; $purple = '#7c3aed';
     $line = '1px solid var(--bo-border)';
 
@@ -799,7 +800,12 @@ if (!function_exists('bo_sparkline')) {
            . "&#183;&#183;&#183;</span>";
     }
 
-    $col = ['full' => '#16a34a', 'partial' => '#d97706', 'syncing' => '#2563eb', 'none' => '#dc2626'];
+    /* Syncing is blue HERE but green in the score breakdown, and that is
+       deliberate. In the breakdown it answers "is this healthy" - a copy being
+       produced is healthy. In history it answers "what was the state at that
+       sample" - and mid-transfer is genuinely a different state from complete,
+       which is the distinction the sparkline exists to show. */
+    $col = ['full' => '#16a34a', 'partial' => '#b45309', 'syncing' => '#2563eb', 'none' => '#dc2626'];
     $w = 3; $gap = 1.4;
     $tot = round(count($rows) * ($w + $gap));
     $svg = "<svg width='$tot' height='$h' viewBox='0 0 $tot $h' role='img'"

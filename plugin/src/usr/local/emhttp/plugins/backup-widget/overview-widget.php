@@ -9,21 +9,25 @@
  *
  * Wording rules, from review:
  *   - "backup targets missing", never "gaps". Gap is our jargon.
- *   - Lead with "Attention required" when something needs doing, so the state is
- *     named before the count.
+ *   - No "Attention required" headline. Above a count that already says what is
+ *     wrong it was pure redundancy in a tile with no spare room.
  *   - Score per dataset, averaged, half credit for uploads in progress. Counting
  *     "datasets where every target is present" read 40% for an estate that was
  *     genuinely fine, and a metric that overstates danger gets ignored just like
  *     one that understates it. See bo_score().
  *
- * Status marks are shape and colour, not glyph soup:
+ * Status marks are one family of dots, GitHub-Actions style, because a row of
+ * mixed glyphs is slower to read than a row of dots in different colours:
  *   filled green dot   a copy exists
  *   blue sync arrows   a copy is being made right now
  *   filled amber dot   configured target with no copy yet
- *   grey dash          not a target by design
- * A hollow ring was tried for the last case and read as "inactive" rather than
- * "not applicable"; a dash says nothing-to-see-here without implying a state.
- * An exclamation mark was tried for the amber case and read as "broken".
+ *   pale grey dot      not a target by design
+ * Three things were tried and rejected for that last state: an exclamation mark
+ * (read as "broken"), a hollow ring (read as "inactive"), and a dash (read as
+ * missing data rather than not-applicable).
+ *
+ * Syncing counts as green in the breakdown, not blue: a copy actively being
+ * produced is a healthy state, and blue reads as merely informational.
  *
  * Element ids are prefixed bw- and are distinct from the page's bo- ids: both can
  * be open in one browser at once, and a shared id would have the tile's 1s tick
@@ -35,18 +39,21 @@ if (!function_exists('bw_mark')) {
   function bw_mark($state, $green, $amber, $blue, $grey) {
     switch ($state) {
       case 'ok':
-        return ['svg' => "<svg width='11' height='11' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5' fill='$green'/></svg>",
+        return ['svg' => "<svg width='13' height='13' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5' fill='$green'/></svg>",
                 'tip' => 'Backed up'];
       case 'syncing':
-        return ['svg' => bo_icon('sync', 12, $blue), 'tip' => 'Copy in progress'];
+        return ['svg' => bo_icon('sync', 13, $blue), 'tip' => 'Copy in progress'];
       case 'missing':
-        return ['svg' => "<svg width='11' height='11' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5' fill='$amber'/></svg>",
+        return ['svg' => "<svg width='13' height='13' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5' fill='$amber'/></svg>",
                 'tip' => 'No backup copy yet - this target is configured but nothing has been uploaded to it'];
       case 'unknown':
-        return ['svg' => "<svg width='11' height='11' viewBox='0 0 12 12'><circle cx='6' cy='6' r='4.3' fill='none' stroke='$grey' stroke-width='1.4' stroke-dasharray='2 2'/></svg>",
+        return ['svg' => "<svg width='13' height='13' viewBox='0 0 12 12'><circle cx='6' cy='6' r='4.3' fill='none' stroke='$grey' stroke-width='1.4' stroke-dasharray='2 2'/></svg>",
                 'tip' => 'Not checked since boot'];
       default:
-        return ['svg' => "<svg width='11' height='11' viewBox='0 0 12 12'><rect x='1.5' y='5.2' width='9' height='1.6' rx='.8' fill='$grey'/></svg>",
+        /* Filled pale dot, GitHub-Actions style. A hollow ring read as
+           "inactive" and a dash read as absent-data; a greyed member of the same
+           dot family reads as a state in the series, which is what it is. */
+        return ['svg' => "<svg width='13' height='13' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5' fill='#cbd5e1'/></svg>",
                 'tip' => 'Not configured - this dataset is not meant to go to this cloud'];
     }
   }
@@ -74,7 +81,7 @@ if (!function_exists('bo_render_widget')) {
     $st = bo_state();
     $h  = function ($s) { return htmlspecialchars((string)$s, ENT_QUOTES); };
 
-    $green = '#16a34a'; $red = '#dc2626'; $amber = '#d97706';
+    $green = '#16a34a'; $red = '#dc2626'; $amber = '#b45309';   // softened from #d97706: less saturated reads calmer
     $blue  = '#2563eb'; $grey = '#94a3b8';
 
     $q        = bo_score($st);
@@ -83,23 +90,26 @@ if (!function_exists('bo_render_widget')) {
 
     $out = "<div class='bw'>";
 
-    /* ---- gauge, headline, breakdown ---- */
+    /* ---- gauge, status line, breakdown ---- */
+    /* No separate headline. "Attention required" above a count that already says
+       what is wrong was one line of redundancy in a tile with no spare room; the
+       score label plus the count carries it. */
     if ($nMissing > 0) {
-      $line1 = "<span style='color:$amber;font-weight:700'>Attention required</span>";
-      $line2 = "$nMissing backup target" . ($nMissing > 1 ? 's' : '') . " missing";
+      $status = "$nMissing backup target" . ($nMissing > 1 ? 's' : '') . " missing";
+      $scol   = $amber;
     } elseif ($st['syncing'] > 0) {
-      $line1 = "<span style='color:$blue;font-weight:700'>Copies in progress</span>";
-      $line2 = $st['syncing'] . " upload" . ($st['syncing'] > 1 ? 's' : '') . " running";
+      $status = $st['syncing'] . " upload" . ($st['syncing'] > 1 ? 's' : '') . " in progress";
+      $scol   = $green;
     } else {
-      $line1 = "<span style='color:$green;font-weight:700'>Fully protected</span>";
-      $line2 = "every configured target holds a copy";
+      $status = "every configured target holds a copy";
+      $scol   = $green;
     }
 
-    /* Breakdown in words, because a single percentage hides which datasets are
-       actually short. */
+    /* Breakdown. Syncing is green, not blue: a copy actively being produced is a
+       healthy state, and blue reads as merely informational. */
     $bits = [];
     if ($q['full'])    $bits[] = "<span style='color:$green'>{$q['full']} full</span>";
-    if ($q['syncing']) $bits[] = "<span style='color:$blue'>{$q['syncing']} syncing</span>";
+    if ($q['syncing']) $bits[] = "<span style='color:$green'>{$q['syncing']} syncing</span>";
     if ($q['partial']) $bits[] = "<span style='color:$amber'>{$q['partial']} partial</span>";
     if ($q['none'])    $bits[] = "<span style='color:$red'>{$q['none']} none</span>";
 
@@ -107,8 +117,7 @@ if (!function_exists('bo_render_widget')) {
           . "<div class='bw-gauge'>" . bw_gauge($q['pct'], $gcol)
           . "<div class='bw-gauge-l'>Backup score</div></div>"
           . "<div class='bw-headtxt'>"
-          . "<div class='bw-headline'>$line1</div>"
-          . "<div class='bw-sub'>$line2</div>"
+          . "<div class='bw-status' style='color:$scol'>$status</div>"
           . "<div class='bw-sub bw-break'>" . implode(" &#183; ", $bits) . "</div>"
           . "</div></div>";
 
@@ -156,7 +165,7 @@ if (!function_exists('bo_render_widget')) {
     $out .= "<div class='bw-gr bw-gh'><span></span>";
     foreach (['g', 'd', 'm'] as $sk) {
       $out .= "<span class='bw-mk' title='" . $h($cloudFull[$sk] . ' via ' . $cloudTool[$sk]) . "'>"
-            . bo_brand($sk, 12) . "<span class='bw-cl'>" . $h($cloudLabel[$sk]) . "</span></span>";
+            . bo_brand($sk, 14) . "<span class='bw-cl'>" . $h($cloudLabel[$sk]) . "</span></span>";
     }
     $out .= "<span class='bw-spk-h' title='State at each of the last 14 coverage checks'>history</span></div>";
 
@@ -167,10 +176,26 @@ if (!function_exists('bo_render_widget')) {
             . "<span class='bw-dsn'>" . $h($r['title']) . "</span></span>";
       foreach (['g', 'd', 'm'] as $sk) {
         $c = $r['cells'][$sk];
-        $m = bw_mark($c['state'] ?? 'na', $green, $amber, $blue, $grey);
-        $tip = $m['tip'];
-        if (($c['state'] ?? '') === 'ok')      $tip .= ' - ' . bo_when($c['ts']);
-        if (($c['state'] ?? '') === 'syncing') $tip .= ' - ' . round($c['pct']) . '% of bytes uploaded';
+        $state = $c['state'] ?? 'na';
+        $m = bw_mark($state, $green, $amber, $blue, $grey);
+
+        /* Multi-line tooltip: everything you would otherwise expand the row for,
+           with no extra UI. Native title attributes honour newlines. */
+        $tip = $cloudFull[$sk] . " - " . $cloudTool[$sk] . "\n";
+        if ($state === 'ok') {
+          $tip .= "Last backup: " . strip_tags(bo_when($c['ts']));
+          if (($c['rev'] ?? '') !== '') $tip .= " (revision {$c['rev']})";
+        } elseif ($state === 'syncing') {
+          $tip .= "Uploading now: " . round($c['pct']) . "% of bytes present";
+        } elseif ($state === 'missing') {
+          $tip .= "Never backed up\nTarget is configured but has received nothing yet";
+        } elseif ($state === 'unknown') {
+          $tip .= "Not checked since boot";
+        } else {
+          $tip .= "Not configured\nThis dataset is not sent to this cloud";
+        }
+        $tip .= "\nSource: /mnt/user/" . $r['share'];
+
         $out .= "<span class='bw-mk' title='" . $h($tip) . "'>" . $m['svg'] . "</span>";
       }
       $out .= "<span class='bw-spk'>" . bo_sparkline($r['share']) . "</span>";
@@ -227,7 +252,7 @@ if (!function_exists('bo_widget_header')) {
     $st = bo_state();
     $running = (bool)$st['act'];
     $missing = count($st['gaps']);
-    $colour  = $running ? '#2563eb' : ($missing ? '#d97706' : '#16a34a');
+    $colour  = $running ? '#2563eb' : ($missing ? '#b45309' : '#16a34a');
     $label   = $running ? 'transferring' : ($missing ? 'action needed' : 'protected');
     return "<span style='color:$colour'>&#9679;</span> "
          . "<span style='font-weight:normal;opacity:.7'>$label</span>";
