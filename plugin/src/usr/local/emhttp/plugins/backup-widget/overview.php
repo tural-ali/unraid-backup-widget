@@ -461,6 +461,11 @@ if (!function_exists('bo_live_json')) {
           'running'  => true,
           'name'     => bo_plan()[$share]['title'] ?? $share,
           'pct'      => round($ov['pct'], 1),
+          /* Whether the percentage label fits inside the filled bar is decided
+             HERE, not in the tile's script. The script is emitted into a
+             fragment that must parse as XML, and a JS comparison operator puts
+             a literal angle bracket in it - which is exactly how this broke. */
+          'inside'   => $ov['pct'] >= 14,
           'bytes'    => bo_bytes($ov['done']) . ' / ' . bo_bytes($ov['total']),
           'rate'     => bo_rate($r['speed']),
           'eta'      => bo_dur($r['eta']),
@@ -792,7 +797,7 @@ if (!function_exists('bo_sparkline')) {
   /* Compact run history. Bars rather than glyphs: a row of bars is legible at
      3px wide where a row of ticks and crosses is not. Bar HEIGHT also encodes
      state, so it survives monochrome and colour-blind readers. */
-  function bo_sparkline($share, $h = 13, $keep = 14) {
+  function bo_sparkline($share, $h = 14, $keep = 5) {
     $rows = bo_history($keep)[$share] ?? [];
     if (!$rows) {
       return "<span class='bw-spk-none' title='No history yet - samples are recorded"
@@ -806,7 +811,10 @@ if (!function_exists('bo_sparkline')) {
        sample" - and mid-transfer is genuinely a different state from complete,
        which is the distinction the sparkline exists to show. */
     $col = ['full' => '#16a34a', 'partial' => '#b45309', 'syncing' => '#2563eb', 'none' => '#dc2626'];
-    $w = 3; $gap = 1.4;
+    /* Five wide bars rather than fourteen hairlines. At 3px the row read as a
+       single tick and nobody could tell what it was; at 6px it reads as a
+       sequence, which is the whole point. */
+    $w = 6; $gap = 2.4;
     $tot = round(count($rows) * ($w + $gap));
     $svg = "<svg width='$tot' height='$h' viewBox='0 0 $tot $h' role='img'"
          . " aria-label='Recent backup history'>";

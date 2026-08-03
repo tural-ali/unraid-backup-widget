@@ -66,7 +66,7 @@ if (!function_exists('bw_gauge')) {
   function bw_gauge($pct, $colour, $px = 61) {
     $pct = max(0, min(100, (int)$pct));
     return "<svg width='$px' height='$px' viewBox='0 0 36 36' role='img'"
-         . " aria-label='Backup score $pct percent'>"
+         . " aria-label='Protection score $pct percent'>"
          . "<circle cx='18' cy='18' r='16' fill='none' stroke='#e2e8f0' stroke-width='2.2'/>"
          . "<circle cx='18' cy='18' r='16' fill='none' stroke='$colour' stroke-width='2.2'"
          . " stroke-linecap='round' pathLength='100' stroke-dasharray='$pct 100'"
@@ -231,6 +231,10 @@ if (!function_exists('bo_render_widget')) {
               . "<span class='bw-dets'>" . $m['svg'] . " $txt</span>"
               . "</div>";
       }
+      /* Labelled history inside the expansion. The collapsed sparkline is
+         necessarily terse; here there is room to say what it is. */
+      $out .= "<div class='bw-hist'><span class='bw-histl'>History</span>"
+            . "<span>" . bo_sparkline($r['share'], 14, 5) . "</span></div>";
       $out .= "<div class='bw-detr bw-detp'>"
             . "<span class='bw-detc'>/mnt/user/" . $h($r['share']) . "</span>"
             . "<span class='bw-dets'>" . number_format($r['files']) . " files &#183; "
@@ -240,8 +244,15 @@ if (!function_exists('bo_render_widget')) {
     $out .= "</div>";
 
     [$nextTs, $nextWhat] = bo_next_run();
-    $out .= "<div class='bw-foot'>next " . $h(date('H:i', $nextTs)) . " " . $h($nextWhat)
-          . " &#183; checked " . $h($st['cov_updated']) . "</div>";
+    /* One action, and it goes where the answers are. There is no Duplicacy web UI
+       on this host to link to, and an endpoint that runs backups from a web page
+       is a security surface this deliberately does not have - so the link opens
+       the full overview, which has the per-cloud detail and the attention list. */
+    $out .= "<div class='bw-foot'>"
+          . "<span>next " . $h(date('H:i', $nextTs)) . " " . $h($nextWhat)
+          . " &#183; checked " . $h($st['cov_updated']) . "</span>"
+          . "<a class='bw-open' href='/Tools/BackupOverview' title='Open the full backup overview'>"
+          . "details &#8594;</a></div>";
 
     return $out . "</div>";
   }

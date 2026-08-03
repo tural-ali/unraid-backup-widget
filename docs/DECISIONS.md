@@ -195,3 +195,38 @@ to a line that continued `$blue = '#2563eb';`, putting the assignment inside the
 page still rendered - PHP treats the undefined variable as empty - so every blue element
 silently lost its colour with no error anywhere. Rendering successfully is not evidence of
 correctness; the check that caught it was grepping the OUTPUT for the expected colour.
+
+## Polish pass 2 (2026.08.06)
+
+**Expanded rows collapsing after a few seconds was a bug, not a preference.** The 30s tick
+replaces every node in the tile, and which rows were open lived only in the nodes being thrown
+away. Open state now lives in `window.bwOpen`, is written to `localStorage` so it survives a
+dashboard reload, and is re-applied after every rebuild.
+
+**Five wide bars, not fourteen hairlines.** At 3px the history row read as a single tick and
+was unintelligible without having been told what it was. At 6px across five samples it reads
+as a sequence. The expansion also carries a labelled `History` row, because the collapsed
+version is necessarily terse.
+
+**"Protection score", not "Backup score".** It scores how well the data is protected across
+targets, not whether jobs ran - the more precise word is worth using.
+
+**A shield, not a heartbeat.** The heart implied general system-health monitoring; this widget
+is specifically about backup integrity.
+
+**One action, and it goes to the overview.** There is no Duplicacy web UI on this host to link
+to, and an endpoint that runs backups from a web page is a security surface this deliberately
+does not have. So `details →` opens Tools → Backup Overview, which has the per-cloud detail
+and the attention list.
+
+## Mistakes worth not repeating (continued)
+
+**JavaScript comparison operators broke XML well-formedness.** The tile fragment must parse as
+XML, and a patch that added `if (p >= 14)` / `if (p < 14)` to the live tick put literal angle
+brackets inside `<script>`. The tile still rendered - browsers parse HTML leniently - so
+nothing looked wrong, and an earlier check that only counted `&&` passed it. The endpoint now
+sends a boolean `inside` flag and the script contains no comparisons at all.
+
+The lesson generalises: the check must test the actual invariant. Counting `&&` tested one
+instance of the rule rather than the rule, which is "the fragment parses as XML". That is now
+what gets asserted, by parsing it.
