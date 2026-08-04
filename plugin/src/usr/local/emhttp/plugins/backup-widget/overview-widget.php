@@ -75,6 +75,20 @@ if (!function_exists('bo_render_widget')) {
 
     $out = "<div class='bw'>";
 
+    /* Nothing configured is a state of its own, not a score of zero. Without this
+       a fresh install - or an operator who unticked everything - got a gauge, a
+       breakdown and an empty grid, all describing nothing. */
+    if (!$st['rows']) {
+      $out .= "<div class='bw-empty'>"
+            . bo_icon('shield', 22, $grey)
+            . "<div><b>No datasets configured</b>"
+            . "<div class='bw-sub'>Choose which shares to watch and which clouds each one "
+            . "should reach.</div>"
+            . "<a class='bw-open' href='/Utilities/BackupWidget'>Open settings &#8594;</a>"
+            . "</div></div>";
+      return $out . "</div>";
+    }
+
     /* ---- gauge, status line, breakdown ---- */
     /* No separate headline. "Attention required" above a count that already says
        what is wrong was one line of redundancy in a tile with no spare room; the

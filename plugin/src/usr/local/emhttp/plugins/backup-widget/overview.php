@@ -52,8 +52,14 @@ if (!function_exists('bo_conf')) {
       if (!is_array($c)) $c = [];
     }
     if ($key === null) return $c;
-    $v = isset($c[$key]) ? trim((string)$c[$key]) : '';
-    return $v === '' ? $default : $v;
+    /* An ABSENT key takes the default. A key that is present but empty means the
+       operator chose nothing, and must stay empty.
+       Conflating the two meant unticking every cloud in the settings page handed
+       back the shipped defaults - so "monitor nothing" was indistinguishable from
+       "never configured", and the dashboard invented five datasets the operator
+       had explicitly removed. */
+    if (!array_key_exists($key, $c)) return $default;
+    return trim((string)$c[$key]);
   }
 }
 
@@ -138,6 +144,7 @@ if (!function_exists('bo_sets')) {
   function bo_sets() {
     $raw = bo_conf('BW_SETS', 'raw-photos:gdrive,mailru videos:gdrive paperless:gdrive,mailru appdata:gdrive,mailru immich:gdrive');
     $out = [];
+    if (trim($raw) === '') return $out;
     foreach (preg_split('/\s+/', trim($raw)) as $entry) {
       if ($entry === '' || strpos($entry, ':') === false) continue;
       [$share, $stores] = explode(':', $entry, 2);
@@ -149,7 +156,9 @@ if (!function_exists('bo_sets')) {
 
 if (!function_exists('bo_mirrored')) {
   function bo_mirrored() {
-    return array_values(array_filter(preg_split('/\s+/', trim(bo_conf('BW_MIRRORED', 'videos raw-photos')))));
+    $raw = trim(bo_conf('BW_MIRRORED', 'videos raw-photos'));
+    if ($raw === '') return [];
+    return array_values(array_filter(preg_split('/\s+/', $raw)));
   }
 }
 
@@ -723,15 +732,26 @@ if (!function_exists('bo_render')) {
     $out = "<div class='bo-wrap'>";
 
     /* ---- header ---- */
-    $pill = $nMissing > 0
-      ? "<span class='bo-pill bo-pill-warn'>" . bo_icon('alert', 14, $p['amber']) . " $nMissing target"
-        . ($nMissing > 1 ? 's' : '') . " missing</span>"
-      : "<span class='bo-pill bo-pill-ok'>" . bo_icon('check', 14, $p['green']) . " All protected</span>";
+    /* With nothing configured there is no claim to make. "All protected" across
+       zero datasets is the most misleading thing this page could say. */
+    if (!$st['rows']) {
+      $pill = "<span class='bo-pill' style='background:#94a3b81a;color:#64748b'>"
+            . bo_icon('alert', 14, $p['grey']) . " Not configured</span>";
+      $sub  = "Nothing is being monitored yet";
+    } elseif ($nMissing > 0) {
+      $pill = "<span class='bo-pill bo-pill-warn'>" . bo_icon('alert', 14, $p['amber'])
+            . " $nMissing target" . ($nMissing > 1 ? 's' : '') . " missing</span>";
+      $sub  = "Coverage across " . count($st['rows']) . " datasets";
+    } else {
+      $pill = "<span class='bo-pill bo-pill-ok'>" . bo_icon('check', 14, $p['green'])
+            . " All protected</span>";
+      $sub  = "Coverage across " . count($st['rows']) . " datasets";
+    }
 
     $out .= "<div class='bo-head'>"
           . "<div class='bo-brandmark'>" . bo_icon('shield', 24, $p['blue']) . "</div>"
           . "<div class='bo-titles'><div class='bo-title'>Backup Overview</div>"
-          . "<div class='bo-sub'>Coverage across " . count($st['rows']) . " datasets and three clouds</div></div>"
+          . "<div class='bo-sub'>" . $sub . "</div></div>"
           . $pill
           . "<div class='bo-head-actions'><button type='button' class='bo-btn' onclick='boRefresh()'>"
           . bo_icon('refresh', 14, 'currentColor') . " Refresh</button></div></div>";
@@ -752,6 +772,19 @@ if (!function_exists('bo_render')) {
     if ($q['syncing']) $bits[] = "<span style='color:{$p['green']}'>{$q['syncing']} syncing</span>";
     if ($q['partial']) $bits[] = "<span style='color:{$p['amber']}'>{$q['partial']} partial</span>";
     if ($q['none'])    $bits[] = "<span style='color:{$p['red']}'>{$q['none']} none</span>";
+
+    /* Same reasoning as the tile: no configuration is a distinct state, and a page
+       full of zeroes claims to have measured something. */
+    if (!$st['rows']) {
+      $out .= "<div class='bo-empty'>" . bo_icon('shield', 26, $p['grey'])
+            . "<div><div class='bo-empty-h'>No datasets configured yet</div>"
+            . "<div class='bo-empty-t'>Pick the shares to watch, and which clouds each one is "
+            . "meant to reach. Nothing is monitored until you do - this page reports on "
+            . "Duplicacy and rclone, it does not set them up.</div>"
+            . "<a class='bo-btn' href='/Utilities/BackupWidget'>Open settings &#8594;</a>"
+            . "</div></div></div>";
+      return $out;
+    }
 
     $out .= "<div class='bo-summary'><div class='bo-facts'>";
     foreach ($facts as $f) {

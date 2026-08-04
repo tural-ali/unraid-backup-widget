@@ -301,3 +301,21 @@ kept: it makes the manifest self-contained and immune to the XML-hostility of PH
 Before flipping visibility, every blob in the history was scanned for credential shapes, not
 just the working tree - publishing exposes all commits, and the tree being clean says nothing
 about what an earlier one held. Zero matches.
+
+## Absent config is not empty config (2026.08.10)
+
+Found while checking what a stranger with no Duplicacy would see. `bo_conf()` returned the
+shipped default whenever a value was empty, which conflated two different situations:
+
+- the key is **absent** - no config yet, so defaults are the right answer
+- the key is **present but empty** - the operator chose nothing, and must get nothing
+
+With `BW_SETS=""` the plan still came back with five datasets and an 83% score. Unticking every
+cloud in the settings page silently restored the author's own dataset list, and the dashboard
+reported on shares the operator had explicitly removed. `bo_conf()` now distinguishes the two
+with `array_key_exists`.
+
+That exposed a second gap: nothing had ever rendered with zero datasets. Both surfaces now have
+an explicit empty state pointing at the settings page, and the page header no longer says
+"All protected" across zero datasets - which would have been the most misleading sentence in
+the whole plugin.
