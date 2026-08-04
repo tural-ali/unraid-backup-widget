@@ -448,7 +448,7 @@ if (!function_exists('bo_state')) {
           $cells[$sk] = ['state' => 'syncing', 'pct' => (float)$m[1], 'tool' => $tool];
         } elseif ($v === '-' || $v === '') {
           $cells[$sk] = ['state' => 'missing', 'tool' => $tool];
-          $gaps[] = ['share' => $spec['title'], 'cloud' => $sk, 'tool' => $tool];
+          $gaps[] = ['share' => $share, 'title' => $spec['title'], 'cloud' => $sk, 'tool' => $tool];
         } else {
           $rev = ''; $when = $v;
           if (preg_match('/^r([0-9]+)@(.*)$/', $v, $m)) { $rev = $m[1]; $when = $m[2]; }
@@ -917,12 +917,22 @@ if (!function_exists('bo_render')) {
     /* ---- attention, as a task list ---- */
     $tasks = [];
     foreach ($st['gaps'] as $g) {
-      $cmd = $g['tool'] === 'rclone'
-        ? "/mnt/user/appdata/scripts/rclone-dropbox-sync.sh"
-        : "cd /mnt/user/" . strtolower(str_replace(' ', '-', $g['share'])) . " && duplicacy backup -storage "
-          . ($g['cloud'] === 'm' ? 'mailru' : 'gdrive');
+      /* The Duplicacy command is derivable from the config, so it is real on any
+         host. The mirror command is NOT - it is whatever sync script the operator
+         wrote - so it is only offered when they have told us its path. Printing
+         this author's own script path to a stranger would be an instruction to run
+         a file that does not exist on their machine. */
+      $map = bo_storage_map();
+      if ($g['tool'] === 'rclone') {
+        $cmd = bo_conf('BW_SYNC_CMD', '');
+      } else {
+        $storage = $g['cloud'] === 'm' ? ($map['m'][0] ?? 'mailru') : ($map['g'][0] ?? 'gdrive');
+        $cmd = 'cd ' . escapeshellarg('/mnt/user/' . $g['share'])
+             . ' && ' . escapeshellarg(bo_dup_dir() . '/bin/duplicacy')
+             . ' backup -storage ' . escapeshellarg($storage);
+      }
       $tasks[] = [
-        'title' => $g['share'],
+        'title' => $g['title'] ?? $g['share'],
         'what'  => "No copy on " . $cloudFull[$g['cloud']],
         'why'   => "The target is configured. Nothing has been uploaded to it yet.",
         'cmd'   => $cmd,
@@ -943,7 +953,7 @@ if (!function_exists('bo_render')) {
         'title' => 'Dropbox mirror',
         'what'  => $st['rl_errors'] . " error" . ($st['rl_errors'] > 1 ? 's' : '') . " in today's sync log",
         'why'   => "Individual files failed to transfer; the run itself continued.",
-        'cmd'   => "tail -50 /mnt/user/appdata/rclone/logs/dropbox-sync-" . date('Y-m-d') . ".log",
+        'cmd'   => 'tail -50 ' . escapeshellarg(bo_rclone_dir() . '/logs/dropbox-sync-' . date('Y-m-d') . '.log'),
       ];
     }
 
