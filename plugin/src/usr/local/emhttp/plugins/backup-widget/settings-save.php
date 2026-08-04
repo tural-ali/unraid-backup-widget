@@ -84,9 +84,19 @@ $pick = function ($field) use ($shares) {
 $selG = $pick('cloud_g');
 $selM = $pick('cloud_m');
 $selD = $pick('cloud_d');
+/* same ordering rule for the mirror list */
+$selD = array_values(array_unique(array_merge(
+  array_values(array_intersect(bo_mirrored(), $selD)), $selD)));
+
+/* Preserve the order already in the config, appending anything new. Iterating the
+   share list alphabetically instead would silently reorder the dashboard on the
+   first save - a settings page should not rearrange the thing it configures. */
+$existing = array_keys(bo_sets());
+$ordered  = array_values(array_intersect($existing, $shares));
+foreach ($shares as $s) if (!in_array($s, $ordered, true)) $ordered[] = $s;
 
 $sets = [];
-foreach ($shares as $s) {
+foreach ($ordered as $s) {
   $st = [];
   if (in_array($s, $selG, true)) $st = array_merge($st, explode(',', $stG));
   if (in_array($s, $selM, true)) $st = array_merge($st, explode(',', $stM));
@@ -95,7 +105,7 @@ foreach ($shares as $s) {
 
 /* Display names, only where they differ from what would be derived anyway. */
 $titles = [];
-foreach ($shares as $s) {
+foreach ($ordered as $s) {
   $t = trim((string)($_POST['title_' . $s] ?? ''));
   if ($t === '' || !preg_match('/^[\p{L}\p{N} .\'\-_&()]{1,48}$/u', $t)) continue;
   if ($t === ucwords(str_replace(['-', '_'], ' ', $s))) continue;
