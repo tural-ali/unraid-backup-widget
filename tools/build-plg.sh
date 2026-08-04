@@ -32,7 +32,8 @@ esac
 # installer and re-copied to RAM on every boot, because /usr/local/emhttp is
 # tmpfs and anything written there alone disappears.
 WEB="overview.php overview-widget.php overview-live.php overview-poll.php
-     widget-poll.php BackupOverview.page BackupWidget.page"
+     widget-poll.php settings-save.php
+     BackupOverview.page BackupWidget.page BackupSettings.page"
 # Every script the shipped cron references MUST be listed here. backup-history.sh
 # was added to the cron and to src/ but not to this list, so the manifest wrote a
 # cron entry pointing at a file it never installed - invisible on the machine it
@@ -50,11 +51,21 @@ cat <<HEADER
 <!ENTITY author    "tural-ali">
 <!ENTITY version   "$VERSION">
 <!ENTITY launch    "Tools/BackupOverview">
+<!ENTITY github    "tural-ali/unraid-backup-widget">
 <!ENTITY plgdir    "/boot/config/plugins/&name;">
 <!ENTITY emhttpdir "/usr/local/emhttp/plugins/&name;">
+<!-- pluginURL is what gives Unraid an update path: it re-fetches this manifest to
+     compare versions. Without it the plugin installs but can never be updated,
+     which also disqualifies it from Community Applications. It only became
+     possible once the repository was public - Unraid's installer fetches
+     anonymously, so a private raw URL 404s. -->
+<!ENTITY pluginURL "https://raw.githubusercontent.com/&github;/main/plugin/&name;.plg">
 ]>
 
-<PLUGIN name="&name;" author="&author;" version="&version;" launch="&launch;">
+<PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;"
+        launch="&launch;" min="6.12.0"
+        support="https://github.com/tural-ali/unraid-backup-widget/issues"
+        icon="shield">
 
 <CHANGES>
 See docs/CHANGELOG in the repository. Versions are dates: &version;.
@@ -93,7 +104,8 @@ decode() {  # $1 = basename, $2 = destination, $3 = mode
 }
 
 for f in overview.php overview-widget.php overview-live.php overview-poll.php \
-         widget-poll.php BackupOverview.page BackupWidget.page; do
+         widget-poll.php settings-save.php \
+         BackupOverview.page BackupWidget.page BackupSettings.page; do
   decode "$f" "$PLG/$f" 600
   # /usr/local/emhttp is tmpfs: the flash copy is the source of truth and this
   # second copy is what the webserver actually reads until the next boot.
@@ -115,6 +127,7 @@ echo ""
 echo "backup-widget installed."
 echo "  Dashboard tile : column 2"
 echo "  Full page      : Tools -> Backup Overview"
+echo "  Settings       : Settings -> Utilities -> Backup Widget"
 echo ""
 echo "It reports on backups; it does not run them. Duplicacy and rclone stay"
 echo "under your control. Edit $PLG/config if your layout differs from the"

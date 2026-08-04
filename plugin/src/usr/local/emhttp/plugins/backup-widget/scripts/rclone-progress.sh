@@ -15,7 +15,15 @@
 # Output: /var/local/emhttp/rclone-progress.ini
 # State:  /mnt/user/appdata/rclone/.progress-sample
 set -u
-R=/mnt/user/appdata/rclone
+# Configuration, shared with the settings page and the renderers. KEY="value" so
+# this file is both parse_ini_file-able and source-able - one file, no second
+# parser to drift. Absent config falls back to the defaults below.
+CONF=/boot/config/plugins/backup-widget/config
+[ -f "$CONF" ] && . "$CONF"
+: "${DUP_DIR:=/mnt/user/appdata/duplicacy}"
+: "${RCLONE_DIR:=/mnt/user/appdata/rclone}"
+
+R=$RCLONE_DIR
 C=$R/config/rclone.conf
 OUT=/var/local/emhttp/rclone-progress.ini
 TMP="$OUT.tmp"

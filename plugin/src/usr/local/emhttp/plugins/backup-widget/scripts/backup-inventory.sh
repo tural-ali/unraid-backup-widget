@@ -11,10 +11,24 @@
 #
 # Output: /var/local/emhttp/backup-inventory.ini
 set -u
+# Configuration, shared with the settings page and the renderers. KEY="value" so
+# this file is both parse_ini_file-able and source-able - one file, no second
+# parser to drift. Absent config falls back to the defaults below.
+CONF=/boot/config/plugins/backup-widget/config
+[ -f "$CONF" ] && . "$CONF"
+: "${DUP_DIR:=/mnt/user/appdata/duplicacy}"
+: "${RCLONE_DIR:=/mnt/user/appdata/rclone}"
+
 OUT=/var/local/emhttp/backup-inventory.ini
 TMP="$OUT.tmp"
 
-SHARES="raw-photos videos paperless immich appdata"
+# Datasets come from the config: whatever has a Duplicacy target or is mirrored.
+SHARES=$(
+  { for e in ${BW_SETS:-}; do echo "${e%%:*}"; done
+    for m in ${BW_MIRRORED:-}; do echo "$m"; done
+  } | awk 'NF' | sort -u | tr '\n' ' '
+)
+[ -n "$(echo $SHARES | tr -d ' ')" ] || SHARES="raw-photos videos paperless immich appdata"
 
 : > "$TMP"
 total=0

@@ -1,0 +1,201 @@
+Menu="Utilities"
+Title="Backup Widget"
+Icon="shield"
+---
+<?PHP
+/* Settings page for backup-widget.
+ *
+ * Exists so nobody has to hand-edit a config file, which was the honest blocker
+ * to this being installable by anyone but its author: the dataset list, the
+ * storage names and the paths were all baked in.
+ *
+ * What it does NOT do: run backups, edit Duplicacy or rclone configuration, or
+ * write anywhere except its own config file. Everything it offers is discovered
+ * by reading what is already on the system - the shares under /mnt/user and the
+ * storage names in each Duplicacy repo's preferences - so the form cannot invent
+ * a target that does not exist.
+ *
+ * Saving posts to settings-save.php, which validates every field and rejects the
+ * request without a valid CSRF token.
+ */
+require_once '/usr/local/emhttp/plugins/backup-widget/overview.php';
+
+/* All logic behind functions: .page files share one variable scope with Unraid's
+   own code, and a stray top-level $i or $row can blank the whole page. */
+if (!function_exists('bws_repo_storages')) {
+  /* Storage names configured in a share's Duplicacy repo, read from its
+     preferences file. Offering only these means the form cannot point at a
+     storage Duplicacy has never heard of. */
+  function bws_repo_storages($share) {
+    $p = bo_dup_dir() . '/prefs/' . $share . '/preferences';
+    if (!is_file($p)) {
+      /* repos may keep preferences inside the share itself */
+      $alt = '/mnt/user/' . $share . '/.duplicacy/preferences';
+      if (is_file($alt)) $p = $alt; else return [];
+    }
+    $j = @json_decode(@file_get_contents($p), true);
+    if (!is_array($j)) return [];
+    $names = [];
+    foreach ($j as $st) if (!empty($st['name'])) $names[] = $st['name'];
+    return array_values(array_unique($names));
+  }
+}
+
+if (!function_exists('bws_all_storages')) {
+  function bws_all_storages() {
+    $all = [];
+    foreach (bo_shares() as $s) $all = array_merge($all, bws_repo_storages($s));
+    return array_values(array_unique($all));
+  }
+}
+
+if (!function_exists('bws_render')) {
+  function bws_render() {
+    $h    = function ($s) { return htmlspecialchars((string)$s, ENT_QUOTES); };
+    $sets = bo_sets();
+    $mir  = bo_mirrored();
+    $map  = bo_storage_map();
+    $all  = bws_all_storages();
+    $csrf = function_exists('_var') ? _var($GLOBALS['var'] ?? [], 'csrf_token') : ($GLOBALS['var']['csrf_token'] ?? '');
+
+    $out = "<form method='POST' action='/plugins/backup-widget/settings-save.php' class='bws'>";
+    $out .= "<input type='hidden' name='csrf_token' value='" . $h($csrf) . "'>";
+
+    /* ---------- where the tools live ---------- */
+    $out .= "<div class='bws-sec'><div class='bws-h'>Where the tools live</div>"
+          . "<div class='bws-hint'>Read-only. The plugin never writes to either directory.</div>";
+    foreach ([
+      ['DUP_DIR',    'Duplicacy directory', bo_dup_dir(),    'expects bin/duplicacy and prefs/'],
+      ['RCLONE_DIR', 'rclone directory',    bo_rclone_dir(), 'expects bin/rclone and config/'],
+    ] as [$k, $label, $val, $note]) {
+      $ok = is_dir($val);
+      $out .= "<div class='bws-row'><label>$label</label>"
+            . "<input type='text' name='$k' value='" . $h($val) . "' spellcheck='false'>"
+            . "<span class='bws-note'>" . ($ok
+                ? "<span class='bws-ok'>found</span>"
+                : "<span class='bws-bad'>not found</span>") . " &#183; $note</span></div>";
+    }
+    $out .= "</div>";
+
+    /* ---------- which storage names are which cloud ---------- */
+    $out .= "<div class='bws-sec'><div class='bws-h'>Duplicacy storage names</div>"
+          . "<div class='bws-hint'>Which storage in your repos corresponds to which provider. "
+          . ($all ? "Found in your repos: <code>" . $h(implode('</code> <code>', $all)) . "</code>"
+                  : "No Duplicacy repos found yet - the defaults are kept.") . "</div>";
+    foreach ([['BW_STORAGE_G', 'Google Drive storage', 'g'], ['BW_STORAGE_M', 'Second cloud storage', 'm']] as [$k, $label, $key]) {
+      $out .= "<div class='bws-row'><label>$label</label>"
+            . "<input type='text' name='$k' value='" . $h(implode(',', $map[$key])) . "' spellcheck='false'>"
+            . "<span class='bws-note'>comma separated if you use more than one name</span></div>";
+    }
+    $out .= "</div>";
+
+    /* ---------- the datasets ---------- */
+    $out .= "<div class='bws-sec'><div class='bws-h'>Datasets to monitor</div>"
+          . "<div class='bws-hint'>Tick a cloud only where that dataset is <em>supposed</em> to have a copy. "
+          . "An unticked cloud is reported as \"not configured\" in grey, never as a missing backup - "
+          . "so leaving something off is a decision, not a warning.</div>";
+
+    $out .= "<div class='bws-tbl'><div class='bws-tr bws-th'>"
+          . "<div>Share</div><div>Google (Duplicacy)</div><div>2nd cloud (Duplicacy)</div>"
+          . "<div>Dropbox (rclone mirror)</div><div>Display name</div></div>";
+
+    foreach (bo_shares() as $share) {
+      $repoStores = bws_repo_storages($share);
+      $has = function ($key) use ($share, $sets, $map) {
+        foreach ($sets[$share] ?? [] as $st) if (in_array($st, $map[$key], true)) return true;
+        return false;
+      };
+      $gOn = $has('g');
+      $mOn = $has('m');
+      $dOn = in_array($share, mirroredList(), true);
+
+      /* A cloud can only be offered if the repo actually defines a storage for it.
+         Offering an impossible target is how a dashboard ends up reporting a gap
+         that can never close. */
+      $gPossible = (bool)array_intersect($repoStores, $map['g']);
+      $mPossible = (bool)array_intersect($repoStores, $map['m']);
+
+      $out .= "<div class='bws-tr'>";
+      $out .= "<div class='bws-share'><b>" . $h($share) . "</b>"
+            . ($repoStores ? "<span class='bws-sub'>repo: " . $h(implode(', ', $repoStores)) . "</span>"
+                           : "<span class='bws-sub bws-dim'>no Duplicacy repo</span>") . "</div>";
+
+      foreach ([['g', $gOn, $gPossible], ['m', $mOn, $mPossible]] as [$key, $on, $possible]) {
+        $out .= "<div>" . ($possible
+          ? "<input type='checkbox' name='cloud_" . $key . "[]' value='" . $h($share) . "'"
+            . ($on ? " checked" : "") . ">"
+          : "<span class='bws-na' title='This repo has no storage matching that name, so the plugin "
+            . "cannot check it. Add the storage in Duplicacy first.'>unavailable</span>") . "</div>";
+      }
+
+      $out .= "<div><input type='checkbox' name='cloud_d[]' value='" . $h($share) . "'"
+            . ($dOn ? " checked" : "") . "></div>";
+      $out .= "<div><input type='text' class='bws-name' name='title_" . $h($share) . "' value='"
+            . $h(bo_title_for($share)) . "' spellcheck='false'></div>";
+      $out .= "</div>";
+    }
+    $out .= "</div></div>";
+
+    /* ---------- rclone rc ---------- */
+    $out .= "<div class='bws-sec'><div class='bws-h'>Live transfer figures</div>"
+          . "<div class='bws-hint'>Per-second bytes, rate and ETA come from rclone's remote-control "
+          . "server. Without it the panel falls back to the cron-written figures, which update once "
+          . "a minute. Your sync must run with "
+          . "<code>--rc --rc-addr " . $h(bo_rc_addr()) . "</code>.</div>";
+    foreach ([['BW_RC_ADDR', 'rc address', bo_rc_addr()], ['BW_RC_USER', 'rc username', bo_rc_user()]] as [$k, $label, $val]) {
+      $out .= "<div class='bws-row'><label>$label</label>"
+            . "<input type='text' name='$k' value='" . $h($val) . "' spellcheck='false'></div>";
+    }
+    $secret = bo_rclone_dir() . '/config/rc.secret';
+    $out .= "<div class='bws-row'><label>rc password file</label>"
+          . "<span class='bws-note'><code>" . $h($secret) . "</code> "
+          . (is_file($secret) ? "<span class='bws-ok'>present</span>"
+                              : "<span class='bws-bad'>missing</span> - live figures will fall back")
+          . "</span></div>";
+    $out .= "<div class='bws-hint bws-dim'>The password is never shown here or stored in this config. "
+          . "It is read from that file at request time.</div></div>";
+
+    $out .= "<div class='bws-actions'><input type='submit' value='Apply'>"
+          . "<span class='bws-note'>Writes <code>" . $h(bo_conf_path()) . "</code> only.</span></div>";
+    $out .= "</form>";
+    return $out;
+  }
+}
+
+/* Small helper kept separate so bws_render stays readable. */
+if (!function_exists('mirroredList')) {
+  function mirroredList() { return bo_mirrored(); }
+}
+?>
+<style>
+.bws { font-size:13px; max-width:1100px; }
+.bws code { font-size:11.5px; padding:1px 5px; border-radius:4px; background:rgba(15,23,42,.07); }
+.bws-sec { border:1px solid #e2e8f0; border-radius:12px; padding:15px 17px; margin-bottom:14px;
+  background:#fff; }
+.black .bws-sec { background:#1c1c1c; border-color:#3a3a3a; }
+.bws-h { font-size:14px; font-weight:700; margin-bottom:3px; }
+.bws-hint { font-size:11.5px; color:#64748b; margin-bottom:12px; line-height:1.6; }
+.bws-dim { opacity:.75; }
+.bws-row { display:grid; grid-template-columns:190px 320px 1fr; align-items:center; gap:12px;
+  margin-bottom:8px; }
+.bws-row label { font-weight:600; }
+.bws-row input[type=text] { width:100%; }
+.bws-note { font-size:11.5px; color:#64748b; }
+.bws-ok { color:#16a34a; font-weight:600; }
+.bws-bad { color:#b45309; font-weight:600; }
+.bws-tbl { border:1px solid #e2e8f0; border-radius:10px; overflow:hidden; }
+.black .bws-tbl { border-color:#3a3a3a; }
+.bws-tr { display:grid; grid-template-columns:1fr 150px 160px 180px 200px; align-items:center;
+  gap:10px; padding:9px 13px; border-top:1px solid #edf0f4; min-height:44px; }
+.black .bws-tr { border-color:#333; }
+.bws-tr:first-child { border-top:0; }
+.bws-th { background:#f8fafc; font-size:11px; font-weight:700; color:#64748b; }
+.black .bws-th { background:#232323; }
+.bws-share { display:flex; flex-direction:column; line-height:1.3; }
+.bws-sub { font-size:10.5px; color:#94a3b8; }
+.bws-na { font-size:11px; color:#94a3b8; cursor:help; border-bottom:1px dotted #cbd5e1; }
+.bws-name { width:100%; }
+.bws-actions { display:flex; align-items:center; gap:14px; }
+</style>
+
+<?= bws_render() ?>

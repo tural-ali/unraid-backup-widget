@@ -17,8 +17,16 @@
 # forever: the repo there was purged on 2026-08-03 and Dropbox belongs to the
 # mirror. That read as a permanent red gap for every share.
 set -u
-D=/mnt/user/appdata/duplicacy
-R=/mnt/user/appdata/rclone
+# Configuration, shared with the settings page and the renderers. KEY="value" so
+# this file is both parse_ini_file-able and source-able - one file, no second
+# parser to drift. Absent config falls back to the defaults below.
+CONF=/boot/config/plugins/backup-widget/config
+[ -f "$CONF" ] && . "$CONF"
+: "${DUP_DIR:=/mnt/user/appdata/duplicacy}"
+: "${RCLONE_DIR:=/mnt/user/appdata/rclone}"
+
+D=$DUP_DIR
+R=$RCLONE_DIR
 OUT=/var/local/emhttp/duplicacy-coverage.ini
 TMP="$OUT.tmp"
 
@@ -31,10 +39,10 @@ export DUPLICACY_MAILRU_PASSWORD="${DUPLICACY_GDRIVE_PASSWORD:-}"
 
 # repo:duplicacy-storages. Dropbox is deliberately absent - it is rclone's now.
 # raw-photos and appdata gained mailru on 2026-08-03.
-SETS="raw-photos:gdrive,mailru videos:gdrive paperless:gdrive,mailru appdata:gdrive,mailru immich:gdrive"
+SETS="${BW_SETS:-raw-photos:gdrive,mailru videos:gdrive paperless:gdrive,mailru appdata:gdrive,mailru immich:gdrive}"
 
 # Shares the rclone mirror covers. Must match SHARES in rclone-dropbox-sync.sh.
-MIRRORED="videos raw-photos"
+MIRRORED="${BW_MIRRORED:-videos raw-photos}"
 
 # Same exclusions the sync applies, so a filtered-out file cannot make a
 # complete mirror look short of 100%.

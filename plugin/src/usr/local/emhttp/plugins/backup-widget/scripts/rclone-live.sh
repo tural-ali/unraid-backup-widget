@@ -18,7 +18,15 @@
 #
 # Output: /var/local/emhttp/rclone-dropbox-live.ini
 set -u
-LOGDIR=/mnt/user/appdata/rclone/logs
+# Configuration, shared with the settings page and the renderers. KEY="value" so
+# this file is both parse_ini_file-able and source-able - one file, no second
+# parser to drift. Absent config falls back to the defaults below.
+CONF=/boot/config/plugins/backup-widget/config
+[ -f "$CONF" ] && . "$CONF"
+: "${DUP_DIR:=/mnt/user/appdata/duplicacy}"
+: "${RCLONE_DIR:=/mnt/user/appdata/rclone}"
+
+LOGDIR=$RCLONE_DIR/logs
 TOTALS=/var/local/emhttp/rclone-dropbox-totals.ini
 OUT=/var/local/emhttp/rclone-dropbox-live.ini
 TMP="$OUT.tmp"

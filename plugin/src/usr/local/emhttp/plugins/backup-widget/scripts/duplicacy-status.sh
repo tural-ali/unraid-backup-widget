@@ -3,7 +3,15 @@
 # Runs every minute from cron. Cheap: tail + regex on the current log.
 # Output is an ini file so the .page can parse_ini_file() it defensively.
 set -u
-D=/mnt/user/appdata/duplicacy
+# Configuration, shared with the settings page and the renderers. KEY="value" so
+# this file is both parse_ini_file-able and source-able - one file, no second
+# parser to drift. Absent config falls back to the defaults below.
+CONF=/boot/config/plugins/backup-widget/config
+[ -f "$CONF" ] && . "$CONF"
+: "${DUP_DIR:=/mnt/user/appdata/duplicacy}"
+: "${RCLONE_DIR:=/mnt/user/appdata/rclone}"
+
+D=$DUP_DIR
 OUT=/var/local/emhttp/duplicacy.ini
 TMP="$OUT.tmp"
 LOG="$D/logs/backup-$(date +%F).log"

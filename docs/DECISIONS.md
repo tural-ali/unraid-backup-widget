@@ -264,3 +264,40 @@ command instead of pretending to be a control panel.
 
 **Rejected: an "Open logs" link.** Same reasoning. Streaming root-readable logs through the web
 UI is another surface; the task list gives the `tail` command for the sync log instead.
+
+## Settings page, and going public (2026.08.09)
+
+**The config file existed but nothing read it.** `config.example` shipped from the first
+version, while the dataset list stayed hardcoded in `bo_plan()` *and* separately in the shell
+collectors - two hardcoded copies of the same fact, in a plugin whose central claim is one
+source of truth. `bo_sets()` / `bo_mirrored()` now feed both.
+
+**A settings page rather than documented file editing.** Hand-editing was the honest blocker to
+anyone but the author installing this. The page discovers rather than asks: shares from
+`/mnt/user`, storage names from each repo's Duplicacy preferences. A cloud with no matching
+storage in that repo is shown `unavailable` instead of being offered - offering an impossible
+target is how a dashboard ends up reporting a gap that can never close.
+
+**The save handler executes nothing.** It requires a valid CSRF token, validates every value
+against a whitelist or strict pattern, and intersects submitted share names against the shares
+that exist. That last check is what makes the output safe: the file is sourced by bash, so a
+crafted name is rejected rather than escaped. Verified by posting `../../etc/shadow` and a
+non-existent share and confirming neither reached the file.
+
+**It refreshes nothing after saving.** `bo_plan()` reads the config live, so a changed plan
+appears on the next render; cached coverage catches up at its next pass and until then a newly
+ticked cloud reads "not checked yet" in grey. Shelling out from a web handler to force a
+refresh would have added a command-execution path for a few minutes of latency.
+
+**Saves preserve dataset order.** The first implementation iterated the share list
+alphabetically and silently reordered the dashboard on first save. A settings page should not
+rearrange the thing it configures.
+
+**Repository made public, which enabled `pluginURL`.** Unraid's installer fetches manifests
+anonymously, so a private raw URL 404s - meaning the plugin could install but never update.
+Public also means the base64-embedded payload is no longer strictly necessary, though it is
+kept: it makes the manifest self-contained and immune to the XML-hostility of PHP source.
+
+Before flipping visibility, every blob in the history was scanned for credential shapes, not
+just the working tree - publishing exposes all commits, and the tree being clean says nothing
+about what an earlier one held. Zero matches.

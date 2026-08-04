@@ -29,6 +29,130 @@ if (!function_exists('bo_ini')) {
   }
 }
 
+if (!function_exists('bo_conf_path')) {
+  function bo_conf_path() { return '/boot/config/plugins/backup-widget/config'; }
+}
+
+if (!function_exists('bo_conf')) {
+  /* Configuration, read from one file that both PHP and bash can consume.
+   *
+   * Every value is KEY="value", which parse_ini_file understands and `source`
+   * accepts unchanged - so the settings page, the renderers and the shell
+   * collectors all read the same file with no duplicate parser to drift.
+   *
+   * Absent file or absent key falls back to the shipped default. That matters:
+   * this file used to exist as config.example only, with nothing reading it, and
+   * the dataset list was hardcoded in three places. A missing config must degrade
+   * to working defaults, never to an empty dashboard.
+   */
+  function bo_conf($key = null, $default = null) {
+    static $c = null;
+    if ($c === null) {
+      $c = @parse_ini_file(bo_conf_path());
+      if (!is_array($c)) $c = [];
+    }
+    if ($key === null) return $c;
+    $v = isset($c[$key]) ? trim((string)$c[$key]) : '';
+    return $v === '' ? $default : $v;
+  }
+}
+
+if (!function_exists('bo_dup_dir')) {
+  function bo_dup_dir()    { return rtrim(bo_conf('DUP_DIR', '/mnt/user/appdata/duplicacy'), '/'); }
+  function bo_rclone_dir() { return rtrim(bo_conf('RCLONE_DIR', '/mnt/user/appdata/rclone'), '/'); }
+  function bo_rc_addr()    { return bo_conf('BW_RC_ADDR', '127.0.0.1:5572'); }
+  function bo_rc_user()    { return bo_conf('BW_RC_USER', 'dash'); }
+}
+
+if (!function_exists('bo_shares')) {
+  /* Shares that exist and could be monitored. Excludes Unraid's own and anything
+     the operator has told us to ignore, so the settings page offers a sane list
+     rather than every directory under /mnt/user. */
+  function bo_shares() {
+    $skip = ['system', 'domains', 'isos', 'timemachine'];
+    $out = [];
+    foreach (glob('/mnt/user/*', GLOB_ONLYDIR) ?: [] as $d) {
+      $n = basename($d);
+      if (in_array($n, $skip, true)) continue;
+      if ($n[0] === '.') continue;
+      $out[] = $n;
+    }
+    sort($out);
+    return $out;
+  }
+}
+
+if (!function_exists('bo_title_for')) {
+  /* "raw-photos" -> "Raw Photos", unless the operator named it in BW_TITLES. */
+  function bo_title_for($share) {
+    foreach (explode(';', bo_conf('BW_TITLES', '')) as $pair) {
+      if ($pair === '') continue;
+      [$k, $v] = array_pad(explode('=', $pair, 2), 2, '');
+      if ($k === $share && $v !== '') return $v;
+    }
+    return ucwords(str_replace(['-', '_'], ' ', $share));
+  }
+}
+
+if (!function_exists('bo_icon_for')) {
+  /* A glyph guessed from the name, overridable. Only cosmetic, so guessing is
+     fine - but guessing badly is not, hence the explicit list first. */
+  function bo_icon_for($share) {
+    foreach (explode(';', bo_conf('BW_ICONS', '')) as $pair) {
+      if ($pair === '') continue;
+      [$k, $v] = array_pad(explode('=', $pair, 2), 2, '');
+      if ($k === $share && $v !== '') return $v;
+    }
+    $s = strtolower($share);
+    if (strpos($s, 'photo') !== false || strpos($s, 'raw') !== false)  return 'image';
+    if (strpos($s, 'video') !== false || strpos($s, 'movie') !== false) return 'video';
+    if (strpos($s, 'paper') !== false || strpos($s, 'doc') !== false)   return 'doc';
+    if (strpos($s, 'immich') !== false || strpos($s, 'phone') !== false) return 'phone';
+    if (strpos($s, 'appdata') !== false || strpos($s, 'config') !== false) return 'gear';
+    return 'files';
+  }
+}
+
+if (!function_exists('bo_tint_for')) {
+  function bo_tint_for($share) {
+    $map = ['image' => '#16a34a', 'video' => '#7c3aed', 'doc' => '#ea580c',
+            'phone' => '#2563eb', 'gear'  => '#64748b', 'files' => '#0891b2'];
+    return $map[bo_icon_for($share)] ?? '#64748b';
+  }
+}
+
+if (!function_exists('bo_storage_map')) {
+  /* Which cloud key each Duplicacy storage name belongs to.
+     BW_STORAGE_G / _M name the storages; anything else is ignored. Defaults match
+     the layout this was written against. */
+  function bo_storage_map() {
+    return [
+      'g' => array_filter(array_map('trim', explode(',', bo_conf('BW_STORAGE_G', 'gdrive')))),
+      'm' => array_filter(array_map('trim', explode(',', bo_conf('BW_STORAGE_M', 'mailru')))),
+    ];
+  }
+}
+
+if (!function_exists('bo_sets')) {
+  /* repo:storage,storage  parsed into [share => [storage, ...]]. */
+  function bo_sets() {
+    $raw = bo_conf('BW_SETS', 'raw-photos:gdrive,mailru videos:gdrive paperless:gdrive,mailru appdata:gdrive,mailru immich:gdrive');
+    $out = [];
+    foreach (preg_split('/\s+/', trim($raw)) as $entry) {
+      if ($entry === '' || strpos($entry, ':') === false) continue;
+      [$share, $stores] = explode(':', $entry, 2);
+      $out[$share] = array_values(array_filter(array_map('trim', explode(',', $stores))));
+    }
+    return $out;
+  }
+}
+
+if (!function_exists('bo_mirrored')) {
+  function bo_mirrored() {
+    return array_values(array_filter(preg_split('/\s+/', trim(bo_conf('BW_MIRRORED', 'videos raw-photos')))));
+  }
+}
+
 if (!function_exists('bo_bytes')) {
   /* Decimal units, matching how cloud providers quote quota - Dropbox's "3 TB"
      is 3.002 TiB, and showing TiB here would make every figure disagree with
@@ -159,18 +283,18 @@ if (!function_exists('bo_rc')) {
     if ($cached) return $val;
     $cached = true;
 
-    $pw = @file_get_contents('/mnt/user/appdata/rclone/config/rc.secret');
+    $pw = @file_get_contents(bo_rclone_dir() . '/config/rc.secret');
     if ($pw === false) return null;
     $pw = trim($pw);
 
     $ctx = stream_context_create(['http' => [
       'method'        => 'POST',
-      'header'        => "Authorization: Basic " . base64_encode("dash:$pw") . "\r\n"
+      'header'        => "Authorization: Basic " . base64_encode(bo_rc_user() . ":$pw") . "\r\n"
                        . "Content-Length: 0\r\n",
       'timeout'       => 1.0,
       'ignore_errors' => true,
     ]]);
-    $raw = @file_get_contents('http://127.0.0.1:5572/core/stats', false, $ctx);
+    $raw = @file_get_contents('http://' . bo_rc_addr() . '/core/stats', false, $ctx);
     if ($raw === false) return null;
     $j = json_decode($raw, true);
     if (!is_array($j) || !isset($j['totalBytes'])) return null;
@@ -217,27 +341,46 @@ if (!function_exists('bo_dur')) {
 }
 
 if (!function_exists('bo_plan')) {
-  /* Which datasets go to which clouds, and which tool takes them there.
-     A cloud absent for a dataset is a deliberate decision, NOT a gap - the panel
-     must render those grey, never red.
-
-     Dropbox carries only videos and raw-photos: the mirror is capped by a hard
-     3 TB that cannot be upgraded, so it takes what cannot be re-sourced and
-     nothing else. immich is phone media, already in iCloud and Google Photos.
-     mail.ru takes the small irreplaceable set. */
+  /* Which datasets go to which clouds, built from the config file.
+   *
+   * This used to be a hardcoded array duplicated against the collectors' own
+   * hardcoded list - two sources of truth for the same fact, in a plugin whose
+   * central claim is that it has one. Now both read bo_sets()/bo_mirrored().
+   *
+   * A cloud absent for a dataset is a deliberate decision, NOT a missing backup,
+   * and renders grey. Dropbox is listed only for shares in BW_MIRRORED.
+   */
   function bo_plan() {
-    return [
-      'raw-photos' => ['title' => 'Raw Photos', 'icon' => 'image', 'tint' => '#16a34a',
-                       'targets' => ['g' => 'duplicacy', 'd' => 'rclone', 'm' => 'duplicacy']],
-      'videos'     => ['title' => 'Videos',     'icon' => 'video', 'tint' => '#7c3aed',
-                       'targets' => ['g' => 'duplicacy', 'd' => 'rclone']],
-      'paperless'  => ['title' => 'Paperless',  'icon' => 'doc',   'tint' => '#ea580c',
-                       'targets' => ['g' => 'duplicacy', 'm' => 'duplicacy']],
-      'immich'     => ['title' => 'Immich',     'icon' => 'phone', 'tint' => '#2563eb',
-                       'targets' => ['g' => 'duplicacy']],
-      'appdata'    => ['title' => 'Appdata',    'icon' => 'gear',  'tint' => '#64748b',
-                       'targets' => ['g' => 'duplicacy', 'm' => 'duplicacy']],
-    ];
+    $sets     = bo_sets();
+    $mirrored = bo_mirrored();
+    $map      = bo_storage_map();
+
+    /* Display order: the configured order of BW_SETS, then any mirror-only share
+       that BW_SETS does not mention. */
+    $order = array_keys($sets);
+    foreach ($mirrored as $m) if (!in_array($m, $order, true)) $order[] = $m;
+
+    $plan = [];
+    foreach ($order as $share) {
+      if (!is_dir('/mnt/user/' . $share)) continue;   // configured but gone
+      $targets = [];
+      foreach ($sets[$share] ?? [] as $storage) {
+        foreach (['g', 'm'] as $k) {
+          if (in_array($storage, $map[$k], true)) $targets[$k] = 'duplicacy';
+        }
+      }
+      if (in_array($share, $mirrored, true)) $targets['d'] = 'rclone';
+      if (!$targets) continue;                        // nothing to report on
+
+      $plan[$share] = [
+        'key'     => 'cov_' . str_replace('-', '_', $share),
+        'title'   => bo_title_for($share),
+        'icon'    => bo_icon_for($share),
+        'tint'    => bo_tint_for($share),
+        'targets' => $targets,
+      ];
+    }
+    return $plan;
   }
 }
 

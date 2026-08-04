@@ -30,26 +30,42 @@ Treating a decision as a failure is how people learn to ignore warnings.
 cp plugin/backup-widget.plg /boot/config/plugins/
 ```
 
-Then install it from **Plugins → Install Plugin** pointing at that file, or just let the
-`.plg` run. It is entirely self-contained: every file is embedded, so nothing is fetched
-from the network at install time. That matters because this repository is private and
-Unraid's installer fetches anonymously.
+Or install by URL from **Plugins → Install Plugin**:
+
+```
+https://raw.githubusercontent.com/tural-ali/unraid-backup-widget/main/plugin/backup-widget.plg
+```
+
+That URL is also the manifest's `pluginURL`, so Unraid can check it for updates. The payload
+is base64-embedded in the manifest, so installation fetches nothing further: PHP source is
+full of `<`, `>` and `&`, and a `.plg` is XML that Unraid parses itself.
 
 After installing:
 
 - **Dashboard** → tile in column 2
 - **Tools → Backup Overview** → full page
+- **Settings → Utilities → Backup Widget** → configuration
 
 ## Configuration
 
-Defaults match the host it was written on. If your layout differs, copy
-`plugin/src/boot/config.example` to `/boot/config/plugins/backup-widget/config` and edit.
-The plugin runs unchanged with the file absent.
+**Settings → Utilities → Backup Widget.** Nothing needs editing by hand.
 
-The important keys are which datasets to report on (`BW_SHARES`), which Duplicacy storages
-each one targets (`BW_SETS`), and which the rclone mirror covers (`BW_MIRRORED`). A cloud
-absent from `BW_SETS` for a dataset is treated as "not a target" and never counted as a
-missing backup.
+The page discovers what is already on the system rather than asking you to describe it: the
+shares under `/mnt/user`, and the storage names defined in each Duplicacy repo's own
+preferences. A cloud you cannot actually check is shown as `unavailable` rather than offered,
+so the form cannot create a target that will never be satisfiable.
+
+Tick a cloud only where a dataset is *supposed* to have a copy. An unticked cloud reports as
+"not configured" in grey and is never counted as a missing backup - leaving something off is
+recorded as a decision, not a warning.
+
+It writes one file, `/boot/config/plugins/backup-widget/config`, in `KEY="value"` form so PHP
+and bash both read it directly. Editing it by hand still works; see
+`plugin/src/boot/config.example`. With no config at all the plugin runs on defaults.
+
+The save handler executes nothing, requires a valid Unraid CSRF token, and validates every
+field against the shares that actually exist - the file is later sourced by bash, so injection
+is rejected rather than escaped.
 
 ## How the live numbers work
 
@@ -80,9 +96,11 @@ plugin/src/                   the actual sources
     overview-live.php         1s JSON endpoint
     overview-poll.php         30s page endpoint
     widget-poll.php           30s tile endpoint
+    settings-save.php         validating POST handler for the settings form
     BackupOverview.page       Tools page
     BackupWidget.page         dashboard tile
-    scripts/                  the five cron collectors
+    BackupSettings.page       Settings → Utilities page
+    scripts/                  the six cron collectors
   boot/
     backup-widget.cron        collector schedule
     config.example            documented defaults
