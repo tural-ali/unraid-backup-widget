@@ -33,8 +33,12 @@ esac
 # tmpfs and anything written there alone disappears.
 WEB="overview.php overview-widget.php overview-live.php overview-poll.php
      widget-poll.php BackupOverview.page BackupWidget.page"
+# Every script the shipped cron references MUST be listed here. backup-history.sh
+# was added to the cron and to src/ but not to this list, so the manifest wrote a
+# cron entry pointing at a file it never installed - invisible on the machine it
+# was developed on, because the flash copy was already there by hand.
 SCRIPTS="duplicacy-status.sh duplicacy-coverage.sh backup-inventory.sh
-         rclone-live.sh rclone-progress.sh"
+         rclone-live.sh rclone-progress.sh backup-history.sh"
 
 b64() { base64 < "$1" | tr -d '\n'; }
 
@@ -135,6 +139,18 @@ echo "backup-widget removed. Config kept at /boot/config/plugins/backup-widget."
 </PLUGIN>
 INSTALL
 } > "$OUT"
+
+# Guard: every script the cron invokes must be in the manifest. This exact
+# mismatch shipped once - the cron called backup-history.sh and the manifest did
+# not contain it, which is undetectable on a box where the file already exists.
+missing=0
+for s in $(grep -oE 'scripts/[a-z-]+\.sh' "$SRC/boot/backup-widget.cron" | sed 's|scripts/||' | sort -u); do
+  if ! grep -q "/tmp/$s.b64" "$OUT"; then
+    echo "  ERROR: cron references $s but the manifest does not install it"
+    missing=1
+  fi
+done
+[ "$missing" -eq 0 ] || exit 1
 
 echo "  wrote $OUT  ($(wc -c < "$OUT") bytes, version $VERSION)"
 
