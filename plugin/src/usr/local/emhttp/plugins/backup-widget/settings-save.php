@@ -69,10 +69,20 @@ $cleanAddr = function ($v, $fallback) {
 $dupDir    = $cleanPath($_POST['DUP_DIR']    ?? '', '/mnt/user/appdata/duplicacy');
 $rcloneDir = $cleanPath($_POST['RCLONE_DIR'] ?? '', '/mnt/user/appdata/rclone');
 $stG       = $cleanNames($_POST['BW_STORAGE_G'] ?? '', 'gdrive');
+$stD       = $cleanNames($_POST['BW_STORAGE_D'] ?? '', 'dropbox');
 $stM       = $cleanNames($_POST['BW_STORAGE_M'] ?? '', 'mailru');
 $rcAddr    = $cleanAddr($_POST['BW_RC_ADDR'] ?? '', '127.0.0.1:5572');
 $rcUser    = preg_match('/^[A-Za-z0-9_-]{1,32}$/', (string)($_POST['BW_RC_USER'] ?? ''))
              ? (string)$_POST['BW_RC_USER'] : 'dash';
+
+$repoRoots = [];
+foreach (preg_split('/\s+/', trim((string)($_POST['BW_REPO_ROOTS'] ?? ''))) as $entry) {
+  if ($entry === '' || strpos($entry, '=') === false) continue;
+  [$share, $root] = explode('=', $entry, 2);
+  if (!in_array($share, $shares, true)) continue;
+  $root = $cleanPath($root, '');
+  if ($root !== '' && strpos($root, '/mnt/user/') === 0) $repoRoots[] = $share . '=' . $root;
+}
 
 /* Only shares that exist may appear anywhere. This is the check that makes the
    generated file safe for bash to source. */
@@ -84,11 +94,11 @@ $pick = function ($field) use ($shares) {
 $selG = $pick('cloud_g');
 $selM = $pick('cloud_m');
 $selD = $pick('cloud_d');
+$selR = $pick('mirror_d');
 $selP = $pick('paused');
 /* same ordering rule for the mirror list */
-$selD = array_values(array_unique(array_merge(
-  array_values(array_intersect(bo_mirrored(), $selD)), $selD)));
-$selD = array_values(array_diff($selD, $selP));
+$selR = array_values(array_unique(array_merge(
+  array_values(array_intersect(bo_mirrored(), $selR)), $selR)));
 
 /* Preserve the order already in the config, appending anything new. Iterating the
    share list alphabetically instead would silently reorder the dashboard on the
@@ -99,9 +109,9 @@ foreach ($shares as $s) if (!in_array($s, $ordered, true)) $ordered[] = $s;
 
 $sets = [];
 foreach ($ordered as $s) {
-  if (in_array($s, $selP, true)) continue;
   $st = [];
   if (in_array($s, $selG, true)) $st = array_merge($st, explode(',', $stG));
+  if (in_array($s, $selD, true)) $st = array_merge($st, explode(',', $stD));
   if (in_array($s, $selM, true)) $st = array_merge($st, explode(',', $stM));
   if ($st) $sets[] = $s . ':' . implode(',', array_unique($st));
 }
@@ -128,6 +138,7 @@ $body = "# backup-widget configuration\n"
       . 'DUP_DIR="'      . $dupDir    . "\"\n"
       . 'RCLONE_DIR="'   . $rcloneDir . "\"\n\n"
       . 'BW_STORAGE_G="' . $stG       . "\"\n"
+      . 'BW_STORAGE_D="' . $stD       . "\"\n"
       . 'BW_STORAGE_M="' . $stM       . "\"\n\n"
       /* No double quotes and no colons in these comments. PHP parse_ini_file
          returns false for the ENTIRE file if a comment contains both, which made
@@ -137,8 +148,9 @@ $body = "# backup-widget configuration\n"
       . "# dataset is reported as not configured, in grey, and is never counted as\n"
       . "# a missing backup.\n"
       . 'BW_SETS="'      . implode(' ', $sets) . "\"\n"
+      . 'BW_REPO_ROOTS="' . implode(' ', $repoRoots) . "\"\n"
       . "# shares the rclone mirror covers; must match SHARES in your sync script\n"
-      . 'BW_MIRRORED="'  . implode(' ', $selD) . "\"\n\n"
+      . 'BW_MIRRORED="'  . implode(' ', $selR) . "\"\n\n"
       . "# datasets intentionally paused; shown but excluded from backup health\n"
       . 'BW_PAUSED="'    . implode(' ', $selP) . "\"\n\n"
       . 'BW_RC_ADDR="'   . $rcAddr . "\"\n"

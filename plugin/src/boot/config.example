@@ -5,7 +5,7 @@
 # scripts run unchanged if you leave the file absent.
 #
 # The plugin only ever READS from these locations. It does not run backups - it
-# reports on backups run by Duplicacy and rclone, which stay under your control.
+# reports on backups run by Duplicacy and optionally rclone, which stay under your control.
 
 # Duplicacy install: expects bin/duplicacy, secret.env, tokens/, logs/, prefs/
 DUP_DIR=/mnt/user/appdata/duplicacy
@@ -13,19 +13,24 @@ DUP_DIR=/mnt/user/appdata/duplicacy
 # rclone install: expects bin/rclone, config/rclone.conf, logs/, config/rc.secret
 RCLONE_DIR=/mnt/user/appdata/rclone
 
-# Datasets to report on, in display order. Each must be a share under /mnt/user.
-BW_SHARES="raw-photos videos paperless immich appdata"
+# Storage names mapped to providers.
+BW_STORAGE_G="gdrive"
+BW_STORAGE_D="dropbox"
+BW_STORAGE_M="mailru"
 
 # repo:duplicacy-storages. A cloud absent here is treated as "not a target",
 # rendered grey, and never counted as a gap.
-BW_SETS="raw-photos:gdrive,mailru videos:gdrive paperless:gdrive,mailru appdata:gdrive,mailru immich:gdrive"
+BW_SETS="raw-photos:gdrive,mailru videos:gdrive paperless:gdrive,mailru appdata:gdrive,mailru immich:dropbox icloud:dropbox"
+
+# Optional source-root overrides. Most datasets default to /mnt/user/<dataset>.
+BW_REPO_ROOTS="immich=/mnt/user/immich/backups"
 
 # Shares the rclone mirror covers. Must match SHARES in your sync script.
-BW_MIRRORED="videos raw-photos"
+BW_MIRRORED=""
 
 # Datasets intentionally paused. They stay visible with current local size, but
 # are excluded from cloud gap and health calculations.
-BW_PAUSED=""
+BW_PAUSED="icloud"
 
 # rclone rc endpoint, used for per-second transfer stats.
 BW_RC_ADDR=127.0.0.1:5572

@@ -94,6 +94,9 @@ renders amber.
 the settings page or add it to `BW_PAUSED`. The inventory collector still measures it, while
 the renderers exclude it from backup gaps and the backup score.
 
+**A subdirectory repository is unchecked.** Add a `BW_REPO_ROOTS` entry such as
+`immich=/mnt/user/immich/backups`. The collector and recovery command will then use the same root.
+
 **Mirror stuck at 99.x% and never green.** The coverage check's exclude filters do not match
 the sync's. They must be identical, or a filtered-out file makes a complete mirror look
 short.
@@ -119,9 +122,9 @@ matches your own SSH command line and kills the session issuing it.
 ## Bumping the version
 
 ```bash
-echo 2026.08.14 > VERSION
+echo 2026.08.15 > VERSION
 ./tools/build-plg.sh
-git commit -am "describe the change" && git tag v2026.08.14 && git push --follow-tags
+git commit -am "describe the change" && git tag v2026.08.15 && git push --follow-tags
 ```
 
 Version format is `YYYY.MM.DD`; the build script refuses anything else, so the tag, the

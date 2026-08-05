@@ -1,0 +1,12 @@
+# Changelog
+
+## 2026.08.15
+
+- Support Duplicacy repositories on Dropbox independently from optional rclone mirrors.
+- Support repository-root overrides such as `/mnt/user/immich/backups`.
+- Preserve configured targets while a dataset is paused.
+- Monitor isolated Immich and iCloud Dropbox repositories accurately.
+- Show a pending state instead of contradictory 0% protected output when coverage is unavailable.
+- Prevent concurrent coverage collectors from corrupting their shared cache.
+- Label active Duplicacy transfers with the correct cloud provider.
+- Update the default schedule summary for core, Immich, and iCloud backups.

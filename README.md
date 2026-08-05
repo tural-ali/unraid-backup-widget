@@ -12,13 +12,13 @@ output.
 
 ## What it looks at
 
-Two tools own two different clouds, and the plugin keeps them distinct throughout,
-because they fail differently and are restored differently.
+Duplicacy can own versioned repositories on every provider. rclone mirrors remain
+optional and are tracked separately because they fail and restore differently.
 
 | Cloud | Tool | Kind of copy | What "green" means |
 |---|---|---|---|
 | Google Drive | Duplicacy | Chunked, encrypted, versioned | A committed snapshot exists |
-| Dropbox | rclone `sync` | Plain browsable files | The bytes are present remotely |
+| Dropbox | Duplicacy or rclone `sync` | Versioned repository or plain mirror | A snapshot exists, or mirror bytes are present |
 | mail.ru | Duplicacy | Chunked, encrypted, versioned | A committed snapshot exists |
 
 A dataset that is deliberately not sent to a cloud shows a grey ring, never a warning.
@@ -55,12 +55,17 @@ shares under `/mnt/user`, and the storage names defined in each Duplicacy repo's
 preferences. A cloud you cannot actually check is shown as `unavailable` rather than offered,
 so the form cannot create a target that will never be satisfiable.
 
-Tick a cloud only where a dataset is *supposed* to have a copy. An unticked cloud reports as
+The settings page keeps Dropbox Duplicacy targets separate from optional Dropbox rclone
+mirrors. Tick a cloud only where a dataset is *supposed* to have a copy. An unticked cloud reports as
 "not configured" in grey and is never counted as a missing backup - leaving something off is
 recorded as a decision, not a warning.
 
 Mark a dataset **Paused** when its cloud backup is intentionally suspended.
 It remains visible with its current local size and file count, while its cloud cells and history show `paused` and it is excluded from backup-score and gap calculations.
+Paused datasets retain their configured targets, so resuming one does not require rebuilding its plan.
+
+Use `BW_REPO_ROOTS` when a repository protects a subdirectory rather than an entire share.
+For example, `immich=/mnt/user/immich/backups` monitors only the Immich database and configuration staging directory.
 
 It writes one file, `/boot/config/plugins/backup-widget/config`, in `KEY="value"` form so PHP
 and bash both read it directly. Editing it by hand still works; see
@@ -81,7 +86,7 @@ a browser tab never triggers a cloud call:
 |---|---|---|
 | on request | bytes, rate, ETA, in-flight filenames | rclone rc, local socket |
 | 1 min | Duplicacy progress, mirror file counts | local log parsing |
-| 5 min | byte-accurate mirror progress | one Dropbox listing call |
+| 5 min | byte-accurate mirror progress, when configured | one Dropbox listing call |
 | 6 h | snapshot coverage, dataset sizes | all three clouds, plus `du` |
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the data flow and
@@ -122,9 +127,9 @@ Date-based, Unraid convention: `YYYY.MM.DD` in `VERSION`, which `tools/build-plg
 into the manifest. Bump it, rebuild, commit, tag:
 
 ```bash
-echo 2026.08.14 > VERSION
+echo 2026.08.15 > VERSION
 ./tools/build-plg.sh
-git commit -am "..." && git tag v2026.08.14 && git push --follow-tags
+git commit -am "..." && git tag v2026.08.15 && git push --follow-tags
 ```
 
 The tag, the manifest and the installed plugin all read the same value, so there is no way

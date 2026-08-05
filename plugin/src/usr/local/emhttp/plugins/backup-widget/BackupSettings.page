@@ -27,12 +27,16 @@ if (!function_exists('bws_repo_storages')) {
      preferences file. Offering only these means the form cannot point at a
      storage Duplicacy has never heard of. */
   function bws_repo_storages($share) {
-    $p = bo_dup_dir() . '/prefs/' . $share . '/preferences';
-    if (!is_file($p)) {
-      /* repos may keep preferences inside the share itself */
-      $alt = '/mnt/user/' . $share . '/.duplicacy/preferences';
-      if (is_file($alt)) $p = $alt; else return [];
+    $marker = bo_repo_root($share) . '/.duplicacy';
+    $p = '';
+    if (is_file($marker)) {
+      $prefDir = trim((string)@file_get_contents($marker));
+      if ($prefDir !== '') $p = rtrim($prefDir, '/') . '/preferences';
+    } elseif (is_dir($marker)) {
+      $p = $marker . '/preferences';
     }
+    if (!is_file($p)) $p = bo_dup_dir() . '/prefs/' . $share . '/preferences';
+    if (!is_file($p)) return [];
     $j = @json_decode(@file_get_contents($p), true);
     if (!is_array($j)) return [];
     $names = [];
@@ -76,6 +80,9 @@ if (!function_exists('bws_render')) {
                 ? "<span class='bws-ok'>found</span>"
                 : "<span class='bws-bad'>not found</span>") . " &#183; $note</span></div>";
     }
+    $out .= "<div class='bws-row'><label>Repository root overrides</label>"
+          . "<input type='text' name='BW_REPO_ROOTS' value='" . $h(bo_conf('BW_REPO_ROOTS', '')) . "' spellcheck='false'>"
+          . "<span class='bws-note'>share=/absolute/path entries, separated by spaces</span></div>";
     $out .= "</div>";
 
     /* ---------- which storage names are which cloud ---------- */
@@ -83,7 +90,7 @@ if (!function_exists('bws_render')) {
           . "<div class='bws-hint'>Which storage in your repos corresponds to which provider. "
           . ($all ? "Found in your repos: <code>" . $h(implode('</code> <code>', $all)) . "</code>"
                   : "No Duplicacy repos found yet - the defaults are kept.") . "</div>";
-    foreach ([['BW_STORAGE_G', 'Google Drive storage', 'g'], ['BW_STORAGE_M', 'Second cloud storage', 'm']] as [$k, $label, $key]) {
+    foreach ([['BW_STORAGE_G', 'Google Drive storage', 'g'], ['BW_STORAGE_D', 'Dropbox storage', 'd'], ['BW_STORAGE_M', 'Mail.ru storage', 'm']] as [$k, $label, $key]) {
       $out .= "<div class='bws-row'><label>$label</label>"
             . "<input type='text' name='$k' value='" . $h(implode(',', $map[$key])) . "' spellcheck='false'>"
             . "<span class='bws-note'>comma separated if you use more than one name</span></div>";
@@ -98,8 +105,8 @@ if (!function_exists('bws_render')) {
           . "without counting it as unprotected.</div>";
 
     $out .= "<div class='bws-tbl'><div class='bws-tr bws-th'>"
-          . "<div>Share</div><div>Google (Duplicacy)</div><div>2nd cloud (Duplicacy)</div>"
-          . "<div>Dropbox (rclone mirror)</div><div>Paused</div><div>Display name</div></div>";
+          . "<div>Share</div><div>Google (Duplicacy)</div><div>Dropbox (Duplicacy)</div>"
+          . "<div>Mail.ru (Duplicacy)</div><div>Dropbox mirror</div><div>Paused</div><div>Display name</div></div>";
 
     foreach (bo_shares() as $share) {
       $repoStores = bws_repo_storages($share);
@@ -108,14 +115,16 @@ if (!function_exists('bws_render')) {
         return false;
       };
       $gOn = $has('g');
+      $dOn = $has('d');
       $mOn = $has('m');
-      $dOn = in_array($share, mirroredList(), true);
+      $rOn = in_array($share, mirroredList(), true);
       $pOn = in_array($share, $paused, true);
 
       /* A cloud can only be offered if the repo actually defines a storage for it.
          Offering an impossible target is how a dashboard ends up reporting a gap
          that can never close. */
       $gPossible = (bool)array_intersect($repoStores, $map['g']);
+      $dPossible = (bool)array_intersect($repoStores, $map['d']);
       $mPossible = (bool)array_intersect($repoStores, $map['m']);
 
       $out .= "<div class='bws-tr'>";
@@ -123,7 +132,7 @@ if (!function_exists('bws_render')) {
             . ($repoStores ? "<span class='bws-sub'>repo: " . $h(implode(', ', $repoStores)) . "</span>"
                            : "<span class='bws-sub bws-dim'>no Duplicacy repo</span>") . "</div>";
 
-      foreach ([['g', $gOn, $gPossible], ['m', $mOn, $mPossible]] as [$key, $on, $possible]) {
+      foreach ([['g', $gOn, $gPossible], ['d', $dOn, $dPossible], ['m', $mOn, $mPossible]] as [$key, $on, $possible]) {
         $out .= "<div>" . ($possible
           ? "<input type='checkbox' name='cloud_" . $key . "[]' value='" . $h($share) . "'"
             . ($on ? " checked" : "") . ">"
@@ -131,8 +140,8 @@ if (!function_exists('bws_render')) {
             . "cannot check it. Add the storage in Duplicacy first.'>unavailable</span>") . "</div>";
       }
 
-      $out .= "<div><input type='checkbox' name='cloud_d[]' value='" . $h($share) . "'"
-            . ($dOn ? " checked" : "") . "></div>";
+      $out .= "<div><input type='checkbox' name='mirror_d[]' value='" . $h($share) . "'"
+            . ($rOn ? " checked" : "") . "></div>";
       $out .= "<div><input type='checkbox' name='paused[]' value='" . $h($share) . "'"
             . ($pOn ? " checked" : "") . "></div>";
       $out .= "<div><input type='text' class='bws-name' name='title_" . $h($share) . "' value='"
@@ -190,7 +199,7 @@ if (!function_exists('mirroredList')) {
 .bws-bad { color:#b45309; font-weight:600; }
 .bws-tbl { border:1px solid #e2e8f0; border-radius:10px; overflow:hidden; }
 .black .bws-tbl { border-color:#3a3a3a; }
-.bws-tr { display:grid; grid-template-columns:1fr 140px 150px 170px 75px 190px; align-items:center;
+.bws-tr { display:grid; grid-template-columns:1fr 128px 135px 128px 125px 65px 170px; align-items:center;
   gap:10px; padding:9px 13px; border-top:1px solid #edf0f4; min-height:44px; }
 .black .bws-tr { border-color:#333; }
 .bws-tr:first-child { border-top:0; }

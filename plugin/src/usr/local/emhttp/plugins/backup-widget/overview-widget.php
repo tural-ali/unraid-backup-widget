@@ -48,16 +48,18 @@ if (!function_exists('bw_gauge')) {
   /* Ring gauge. Larger and thinner than the first attempt: at stroke 3.4 a red or
      amber ring dominated a tile it only needs to lead. pathLength=100 lets the
      dash array be the percentage directly, with no circumference arithmetic. */
-  function bw_gauge($pct, $colour, $px = 61) {
+  function bw_gauge($pct, $colour, $px = 61, $pending = false) {
     $pct = max(0, min(100, (int)$pct));
+    $label = $pending ? 'Protection score pending' : "Protection score $pct percent";
+    $text  = $pending ? '?' : "$pct%";
     return "<svg width='$px' height='$px' viewBox='0 0 36 36' role='img'"
-         . " aria-label='Protection score $pct percent'>"
+         . " aria-label='$label'>"
          . "<circle cx='18' cy='18' r='16' fill='none' stroke='#e2e8f0' stroke-width='2.2'/>"
          . "<circle cx='18' cy='18' r='16' fill='none' stroke='$colour' stroke-width='2.2'"
          . " stroke-linecap='round' pathLength='100' stroke-dasharray='$pct 100'"
          . " transform='rotate(-90 18 18)'/>"
          . "<text x='18' y='20.6' text-anchor='middle' font-size='9.5' font-weight='700'"
-         . " fill='$colour'>$pct%</text></svg>";
+         . " fill='$colour'>$text</text></svg>";
   }
 }
 
@@ -71,7 +73,9 @@ if (!function_exists('bo_render_widget')) {
 
     $q        = bo_score($st);
     $nMissing = count($st['gaps']);
-    $gcol     = $q['pct'] >= 90 ? $green : ($q['pct'] >= 60 ? $amber : $red);
+    $coveragePending = (($st['cov_updated'] ?? 'never') === 'never');
+    $gcol     = $coveragePending ? $grey
+              : ($q['pct'] >= 90 ? $green : ($q['pct'] >= 60 ? $amber : $red));
 
     $out = "<div class='bw'>";
 
@@ -93,8 +97,12 @@ if (!function_exists('bo_render_widget')) {
     /* No separate headline. "Attention required" above a count that already says
        what is wrong was one line of redundancy in a tile with no spare room; the
        score label plus the count carries it. */
-    if ($nMissing > 0) {
-      $status = "$nMissing backup target" . ($nMissing > 1 ? 's' : '') . " missing";
+    if ($coveragePending) {
+      $status = "coverage check pending";
+      $scol   = $grey;
+    } elseif ($nMissing > 0 || $q['none'] > 0 || $q['partial'] > 0) {
+      $affected = max($nMissing, $q['none'] + $q['partial']);
+      $status = "$affected dataset" . ($affected > 1 ? 's need' : ' needs') . " attention";
       $scol   = $amber;
     } elseif ($st['syncing'] > 0) {
       $status = $st['syncing'] . " upload" . ($st['syncing'] > 1 ? 's' : '') . " in progress";
@@ -107,14 +115,18 @@ if (!function_exists('bo_render_widget')) {
     /* Breakdown. Syncing is green, not blue: a copy actively being produced is a
        healthy state, and blue reads as merely informational. */
     $bits = [];
-    if ($q['full'])    $bits[] = "<span style='color:$green'>{$q['full']} full</span>";
-    if ($q['syncing']) $bits[] = "<span style='color:$green'>{$q['syncing']} syncing</span>";
-    if ($q['partial']) $bits[] = "<span style='color:$amber'>{$q['partial']} partial</span>";
-    if ($q['none'])    $bits[] = "<span style='color:$red'>{$q['none']} none</span>";
+    if ($coveragePending) {
+      $bits[] = "<span style='color:$grey'>checking configured targets</span>";
+    } else {
+      if ($q['full'])    $bits[] = "<span style='color:$green'>{$q['full']} full</span>";
+      if ($q['syncing']) $bits[] = "<span style='color:$green'>{$q['syncing']} syncing</span>";
+      if ($q['partial']) $bits[] = "<span style='color:$amber'>{$q['partial']} partial</span>";
+      if ($q['none'])    $bits[] = "<span style='color:$red'>{$q['none']} none</span>";
+    }
     if (!empty($st['paused'])) $bits[] = "<span style='color:$grey'>{$st['paused']} paused</span>";
 
     $out .= "<div class='bw-head'>"
-          . "<div class='bw-gauge'>" . bw_gauge($q['pct'], $gcol)
+          . "<div class='bw-gauge'>" . bw_gauge($q['pct'], $gcol, 61, $coveragePending)
           . "<div class='bw-gauge-l'>Backup score</div></div>"
           . "<div class='bw-headtxt'>"
           . "<div class='bw-status' style='color:$scol'>$status</div>"
@@ -159,7 +171,8 @@ if (!function_exists('bo_render_widget')) {
     /* ---- per-dataset grid ---- */
     $cloudLabel = ['g' => 'Google', 'd' => 'Dropbox', 'm' => 'Mail.ru'];
     $cloudFull  = ['g' => 'Google Drive', 'd' => 'Dropbox', 'm' => 'mail.ru'];
-    $cloudTool  = ['g' => 'Duplicacy', 'd' => 'rclone', 'm' => 'Duplicacy'];
+    $dropboxTool = bo_mirrored() ? 'Duplicacy / rclone' : 'Duplicacy';
+    $cloudTool  = ['g' => 'Duplicacy', 'd' => $dropboxTool, 'm' => 'Duplicacy'];
 
     $out .= "<div class='bw-grid'>";
     $out .= "<div class='bw-gr bw-gh'><span></span>";
@@ -183,7 +196,8 @@ if (!function_exists('bo_render_widget')) {
 
         /* Multi-line tooltip: everything you would otherwise expand the row for,
            with no extra UI. Native title attributes honour newlines. */
-        $tip = $cloudFull[$sk] . " - " . $cloudTool[$sk] . "\n";
+        $cellTool = isset($c['tool']) ? bo_tool_label($c['tool']) : $cloudTool[$sk];
+        $tip = $cloudFull[$sk] . " - " . $cellTool . "\n";
         if ($state === 'ok') {
           $tip .= "Last backup: " . strip_tags(bo_when($c['ts']));
           if (($c['rev'] ?? '') !== '') $tip .= " (revision {$c['rev']})";
@@ -198,7 +212,7 @@ if (!function_exists('bo_render_widget')) {
         } else {
           $tip .= "Not configured\nThis dataset is not sent to this cloud";
         }
-        $tip .= "\nSource: /mnt/user/" . $r['share'];
+        $tip .= "\nSource: " . bo_repo_root($r['share']);
 
         $out .= "<span class='bw-mk' title='" . $h($tip) . "'>" . $m['svg'] . "</span>";
       }
@@ -235,7 +249,7 @@ if (!function_exists('bo_render_widget')) {
 
         $out .= "<div class='bw-detr'>"
               . "<span class='bw-detc'>" . $h($cloudFull[$sk])
-              . " <span class='bw-tool'>" . $h($cloudTool[$sk]) . "</span></span>"
+              . " <span class='bw-tool'>" . $h(isset($c['tool']) ? bo_tool_label($c['tool']) : $cloudTool[$sk]) . "</span></span>"
               . "<span class='bw-dets'>" . $m['svg'] . " $txt</span>"
               . "</div>";
       }
@@ -244,7 +258,7 @@ if (!function_exists('bo_render_widget')) {
       $out .= "<div class='bw-hist'><span class='bw-histl'>History</span>"
             . "<span>" . bo_sparkline($r['share'], 14, 5) . "</span></div>";
       $out .= "<div class='bw-detr bw-detp'>"
-            . "<span class='bw-detc'>/mnt/user/" . $h($r['share']) . "</span>"
+            . "<span class='bw-detc'>" . $h(bo_repo_root($r['share'])) . "</span>"
             . "<span class='bw-dets'>" . number_format($r['files']) . " files &#183; "
             . bo_bytes($r['bytes']) . "</span></div>";
       $out .= "</div>";

@@ -17,7 +17,25 @@ TMP="$OUT.tmp"
 LOG="$D/logs/backup-$(date +%F).log"
 PLOG="$D/logs/paperless-$(date +%F).log"
 
-status="idle"; repo=""; pct=""; speed=""; eta=""
+status="idle"; repo=""; storage=""; pct=""; speed=""; eta=""
+
+repo_for_cwd() {
+  local cwd="$1" entry share root
+  for entry in ${BW_REPO_ROOTS:-}; do
+    share="${entry%%=*}"; root="${entry#*=}"
+    [ "$cwd" = "$root" ] && { printf '%s' "$share"; return; }
+  done
+  printf '%s' "${cwd##*/}"
+}
+
+storage_for_repo() {
+  local wanted="$1" entry
+  for entry in ${BW_SETS:-}; do
+    [ "${entry%%:*}" = "$wanted" ] || continue
+    printf '%s' "${entry#*:}" | cut -d, -f1
+    return
+  done
+}
 
 # /var/local/emhttp is a RAM filesystem, so the coverage file is lost on every
 # reboot and its own cron only fires at 00:05/06:05/12:05/18:05 - leaving the
@@ -33,13 +51,13 @@ fi
 for p in $(pgrep -f "duplicacy backup" 2>/dev/null); do
   cwd=$(readlink "/proc/$p/cwd" 2>/dev/null)
   case "$cwd" in
-    /mnt/user/*) status="running"; repo="${cwd##*/}"; break ;;
+    /mnt/user/*) status="running"; repo=$(repo_for_cwd "$cwd"); storage=$(storage_for_repo "$repo"); break ;;
   esac
 done
 
 # Most recent progress line from whichever log was touched last
-newest="$LOG"
-[ -f "$PLOG" ] && [ "$PLOG" -nt "$LOG" ] && newest="$PLOG"
+newest=$(ls -t "$D"/logs/*-"$(date +%F)".log 2>/dev/null | head -1)
+[ -n "$newest" ] || newest="$LOG"
 if [ -f "$newest" ]; then
   # backup.sh appends every repo to one log in sequence, and progress lines do
   # not name their repo. So a progress line is only valid for the repo we
@@ -74,6 +92,7 @@ done_today=$(grep -hoE "Backup for /mnt/user/[a-z-]+ at revision [0-9]+ complete
 {
   echo "status=\"$status\""
   echo "repo=\"$repo\""
+  echo "storage=\"$storage\""
   echo "pct=\"$pct\""
   echo "speed=\"$speed\""
   echo "eta=\"$eta\""

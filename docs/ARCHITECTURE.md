@@ -27,8 +27,8 @@ split by how fast it actually changes.
                                        ▼
    duplicacy logs ──▶ duplicacy-status.sh   (1m)  ──▶ duplicacy.ini
    rclone log     ──▶ rclone-live.sh        (1m)  ──▶ rclone-dropbox-live.ini
-   Dropbox        ──▶ rclone-progress.sh    (5m)  ──▶ rclone-progress.ini
-   3 clouds       ──▶ duplicacy-coverage.sh (6h)  ──▶ duplicacy-coverage.ini
+   Dropbox mirror ──▶ rclone-progress.sh    (5m)  ──▶ rclone-progress.ini
+   cloud repos    ──▶ duplicacy-coverage.sh (6h)  ──▶ duplicacy-coverage.ini
    local du       ──▶ backup-inventory.sh   (6h)  ──▶ backup-inventory.ini
    sync script    ──────────────────────────────▶ rclone-dropbox.ini
                                        │
@@ -104,13 +104,17 @@ overall_pct     = overall_done / local_total
 figure; rate and ETA stay run-scoped, because "how fast is it going right now" and "when
 will this finish" are both properties of the current run.
 
-## Why Dropbox coverage is measured, not asked
+## Two valid Dropbox modes
 
-Duplicacy commits a snapshot only when a backup finishes, so `duplicacy list` is a fine
-coverage check for it. rclone has no snapshots - it is a plain file mirror - so coverage is
+Duplicacy Dropbox repositories are checked with `duplicacy list`, exactly like Google Drive
+and Mail.ru. Optional rclone mirrors have no snapshots, so their coverage is
 measured by comparing remote bytes against local bytes, using the **same filters the sync
 applies**. Without matching filters an excluded `.DS_Store` makes a complete mirror read as
 99.9% and never green.
+
+`BW_SETS` declares Duplicacy targets. `BW_MIRRORED` declares rclone mirrors. Keeping them
+separate lets one Dropbox account hold isolated encrypted repositories without making the
+widget describe them as plain file copies.
 
 ## Refresh model
 

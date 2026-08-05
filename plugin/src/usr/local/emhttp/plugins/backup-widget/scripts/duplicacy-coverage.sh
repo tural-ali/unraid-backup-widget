@@ -4,18 +4,14 @@
 # the nightly run) rather than every minute like the progress script.
 # Output: /var/local/emhttp/duplicacy-coverage.ini
 #
-# Two different tools own two different clouds, and the tile has to reflect that:
+# Two backup modes can target Dropbox, and the tile has to distinguish them:
 #
-#   Google Drive, mail.ru   Duplicacy. Coverage = newest committed snapshot,
-#                           found with `duplicacy list`.
-#   Dropbox                 rclone sync. There are no snapshots to list - it is a
-#                           plain file mirror - so coverage is measured by
-#                           comparing bytes present remotely against bytes
-#                           locally, using the SAME filters the sync uses.
+#   Duplicacy storages      Coverage = newest committed snapshot, found with
+#                           `duplicacy list`. This includes Dropbox repositories.
+#   Dropbox rclone mirror   There are no snapshots to list. Coverage is measured
+#                           by comparing remote and local bytes with matching filters.
 #
-# Asking Duplicacy about Dropbox, as this script used to, now reports "no copy"
-# forever: the repo there was purged on 2026-08-03 and Dropbox belongs to the
-# mirror. That read as a permanent red gap for every share.
+# BW_SETS owns Duplicacy targets. BW_MIRRORED independently owns plain mirrors.
 set -u
 # Configuration, shared with the settings page and the renderers. KEY="value" so
 # this file is both parse_ini_file-able and source-able - one file, no second
@@ -28,21 +24,43 @@ CONF=/boot/config/plugins/backup-widget/config
 D=$DUP_DIR
 R=$RCLONE_DIR
 OUT=/var/local/emhttp/duplicacy-coverage.ini
-TMP="$OUT.tmp"
+LOCK=/var/run/backup-widget-coverage.lock
+exec 9>"$LOCK"
+flock -n 9 || exit 0
+
+TMP="${OUT}.$$"
+TOT_TMP=""
+cleanup() {
+  [ -n "${TMP:-}" ] && rm -f "$TMP"
+  [ -n "${TOT_TMP:-}" ] && rm -f "$TOT_TMP"
+}
+trap cleanup EXIT
 
 source $D/secret.env
 export DBUS_SESSION_BUS_ADDRESS="unix:path=/dev/null"
 export SSL_CERT_FILE=$R/tls/ca-bundle.crt
 export DUPLICACY_GDRIVE_GCD_TOKEN=$D/tokens/gcd-token.json
+export DUPLICACY_DROPBOX_DROPBOX_TOKEN=$(cat "$D/tokens/dropbox-token.json" 2>/dev/null)
 export DUPLICACY_MAILRU_WEBDAV_PASSWORD="${RCLONE_WEBDAV_PASS:-}"
 export DUPLICACY_MAILRU_PASSWORD="${DUPLICACY_GDRIVE_PASSWORD:-}"
 
-# repo:duplicacy-storages. Dropbox is deliberately absent - it is rclone's now.
-# raw-photos and appdata gained mailru on 2026-08-03.
-SETS="${BW_SETS:-raw-photos:gdrive,mailru videos:gdrive paperless:gdrive,mailru appdata:gdrive,mailru immich:gdrive}"
+# repo:duplicacy-storages. Dropbox can hold isolated Duplicacy repositories while
+# BW_MIRRORED remains reserved for any plain rclone mirrors.
+SETS="${BW_SETS:-raw-photos:gdrive,mailru videos:gdrive paperless:gdrive,mailru appdata:gdrive,mailru immich:dropbox icloud:dropbox}"
+
+repo_root() {
+  local repo="$1" entry
+  for entry in ${BW_REPO_ROOTS:-}; do
+    if [ "${entry%%=*}" = "$repo" ]; then
+      printf '%s' "${entry#*=}"
+      return
+    fi
+  done
+  printf '/mnt/user/%s' "$repo"
+}
 
 # Shares the rclone mirror covers. Must match SHARES in rclone-dropbox-sync.sh.
-MIRRORED="${BW_MIRRORED:-videos raw-photos}"
+MIRRORED="${BW_MIRRORED:-}"
 
 # Same exclusions the sync applies, so a filtered-out file cannot make a
 # complete mirror look short of 100%.
@@ -129,7 +147,7 @@ dropbox_cell() {
 for entry in $SETS; do
   repo="${entry%%:*}"
   stores="${entry#*:}"
-  cd "/mnt/user/$repo" 2>/dev/null || continue
+  cd "$(repo_root "$repo")" 2>/dev/null || continue
   out=""
   for st in ${stores//,/ }; do
     line=$(timeout 90 "$D/bin/duplicacy" list -storage "$st" 2>/dev/null \
@@ -156,12 +174,14 @@ for entry in $SETS; do
 done
 echo "cov_updated=\"$(date '+%d/%m %H:%M')\"" >> "$TMP"
 mv "$TMP" "$OUT"
+TMP=""
 
 # Local file counts for the mirrored shares, cached for the per-minute live
 # script. That script needs a denominator to turn "files copied" into a
 # percentage, but walking 21k files every minute is wasteful and asking Dropbox
 # would burn API calls, so the number is refreshed here on the 6h cycle instead.
 TOT=/var/local/emhttp/rclone-dropbox-totals.ini
+TOT_TMP="${TOT}.$$"
 {
   for s in $MIRRORED; do
     n=$(timeout 300 "$R/bin/rclone" --config "$R/config/rclone.conf" size "/mnt/user/$s" \
@@ -169,5 +189,6 @@ TOT=/var/local/emhttp/rclone-dropbox-totals.ini
     [ -n "${n:-}" ] && echo "rt_$(echo "$s" | tr -- '-' '_')=\"$n\""
   done
   echo "rt_updated=\"$(date '+%d/%m %H:%M')\""
-} > "$TOT.tmp"
-mv "$TOT.tmp" "$TOT"
+} > "$TOT_TMP"
+mv "$TOT_TMP" "$TOT"
+TOT_TMP=""

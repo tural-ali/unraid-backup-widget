@@ -129,20 +129,27 @@ if (!function_exists('bo_tint_for')) {
 
 if (!function_exists('bo_storage_map')) {
   /* Which cloud key each Duplicacy storage name belongs to.
-     BW_STORAGE_G / _M name the storages; anything else is ignored. Defaults match
+     BW_STORAGE_G / _D / _M name the storages; anything else is ignored. Defaults match
      the layout this was written against. */
   function bo_storage_map() {
     return [
       'g' => array_filter(array_map('trim', explode(',', bo_conf('BW_STORAGE_G', 'gdrive')))),
+      'd' => array_filter(array_map('trim', explode(',', bo_conf('BW_STORAGE_D', 'dropbox')))),
       'm' => array_filter(array_map('trim', explode(',', bo_conf('BW_STORAGE_M', 'mailru')))),
     ];
+  }
+}
+
+if (!function_exists('bo_tool_label')) {
+  function bo_tool_label($tool) {
+    return strtolower((string)$tool) === 'rclone' ? 'rclone' : 'Duplicacy';
   }
 }
 
 if (!function_exists('bo_sets')) {
   /* repo:storage,storage  parsed into [share => [storage, ...]]. */
   function bo_sets() {
-    $raw = bo_conf('BW_SETS', 'raw-photos:gdrive,mailru videos:gdrive paperless:gdrive,mailru appdata:gdrive,mailru immich:gdrive');
+    $raw = bo_conf('BW_SETS', 'raw-photos:gdrive,mailru videos:gdrive paperless:gdrive,mailru appdata:gdrive,mailru immich:dropbox icloud:dropbox');
     $out = [];
     if (trim($raw) === '') return $out;
     foreach (preg_split('/\s+/', trim($raw)) as $entry) {
@@ -154,9 +161,35 @@ if (!function_exists('bo_sets')) {
   }
 }
 
+if (!function_exists('bo_repo_roots')) {
+  /* Optional source-root overrides, encoded as share=/absolute/path entries.
+     Most repositories live at /mnt/user/<share>; Immich state is intentionally
+     narrower and lives at /mnt/user/immich/backups. */
+  function bo_repo_roots() {
+    $raw = trim(bo_conf('BW_REPO_ROOTS', ''));
+    $out = [];
+    if ($raw === '') return $out;
+    foreach (preg_split('/\s+/', $raw) as $entry) {
+      if (strpos($entry, '=') === false) continue;
+      [$share, $path] = explode('=', $entry, 2);
+      if (preg_match('/^[A-Za-z0-9_-]+$/', $share) && strpos($path, '/mnt/user/') === 0) {
+        $out[$share] = rtrim($path, '/');
+      }
+    }
+    return $out;
+  }
+}
+
+if (!function_exists('bo_repo_root')) {
+  function bo_repo_root($share) {
+    $roots = bo_repo_roots();
+    return $roots[$share] ?? ('/mnt/user/' . $share);
+  }
+}
+
 if (!function_exists('bo_mirrored')) {
   function bo_mirrored() {
-    $raw = trim(bo_conf('BW_MIRRORED', 'videos raw-photos'));
+    $raw = trim(bo_conf('BW_MIRRORED', ''));
     if ($raw === '') return [];
     return array_values(array_filter(preg_split('/\s+/', $raw)));
   }
@@ -164,7 +197,7 @@ if (!function_exists('bo_mirrored')) {
 
 if (!function_exists('bo_paused')) {
   function bo_paused() {
-    $raw = trim(bo_conf('BW_PAUSED', ''));
+    $raw = trim(bo_conf('BW_PAUSED', 'icloud'));
     if ($raw === '') return [];
     return array_values(array_filter(preg_split('/\s+/', $raw)));
   }
@@ -441,7 +474,7 @@ if (!function_exists('bo_plan')) {
       $targets = [];
       if (!$isPaused) {
         foreach ($sets[$share] ?? [] as $storage) {
-          foreach (['g', 'm'] as $k) {
+          foreach (['g', 'd', 'm'] as $k) {
             if (in_array($storage, $map[$k], true)) $targets[$k] = 'duplicacy';
           }
         }
@@ -468,7 +501,7 @@ if (!function_exists('bo_next_run')) {
      duplicacy.cron and rclone-dropbox.cron - if those move, this must too. */
   function bo_next_run() {
     $best = null; $what = '';
-    foreach ([['02:30', 'Duplicacy'], ['05:30', 'Dropbox mirror']] as [$hhmm, $name]) {
+    foreach ([['02:30', 'Core backups'], ['04:00', 'Immich'], ['04:30', 'iCloud']] as [$hhmm, $name]) {
       [$h, $m] = array_map('intval', explode(':', $hhmm));
       $t = mktime($h, $m, 0);
       if ($t <= time()) $t += 86400;
@@ -546,8 +579,14 @@ if (!function_exists('bo_state')) {
        its runs are short and the mirror runs for days. */
     $act = null;
     if ($get($live, 'status') === 'running' && $get($live, 'repo') !== '') {
+      $storage = $get($live, 'storage');
+      $target = 'Duplicacy storage';
+      $labels = ['g' => 'Google Drive', 'd' => 'Dropbox', 'm' => 'mail.ru'];
+      foreach (bo_storage_map() as $cloud => $names) {
+        if (in_array($storage, $names, true)) { $target = $labels[$cloud]; break; }
+      }
       $act = [
-        'what' => 'Backing up', 'target' => 'Google Drive', 'tool' => 'Duplicacy',
+        'what' => 'Backing up', 'target' => $target, 'tool' => 'Duplicacy',
         'name' => $get($live, 'repo'),
         'pct'  => (float)str_replace('%', '', $get($live, 'pct', '0')),
         'rate' => $get($live, 'speed'), 'eta' => $get($live, 'eta'),
@@ -803,11 +842,14 @@ if (!function_exists('bo_render')) {
     $h  = function ($s) { return htmlspecialchars((string)$s, ENT_QUOTES); };
 
     $nMissing = count($st['gaps']);
-    $scol = $q['pct'] >= 90 ? $p['green'] : ($q['pct'] >= 60 ? $p['amber'] : $p['red']);
+    $coveragePending = (($st['cov_updated'] ?? 'never') === 'never');
+    $scol = $coveragePending ? $p['grey']
+          : ($q['pct'] >= 90 ? $p['green'] : ($q['pct'] >= 60 ? $p['amber'] : $p['red']));
 
     $cloudLabel = ['g' => 'Google', 'd' => 'Dropbox', 'm' => 'Mail.ru'];
     $cloudFull  = ['g' => 'Google Drive', 'd' => 'Dropbox', 'm' => 'mail.ru'];
-    $cloudTool  = ['g' => 'Duplicacy', 'd' => 'rclone', 'm' => 'Duplicacy'];
+    $dropboxTool = bo_mirrored() ? 'Duplicacy / rclone' : 'Duplicacy';
+    $cloudTool  = ['g' => 'Duplicacy', 'd' => $dropboxTool, 'm' => 'Duplicacy'];
 
     $out = "<div class='bo-wrap'>";
 
@@ -818,9 +860,14 @@ if (!function_exists('bo_render')) {
       $pill = "<span class='bo-pill' style='background:#94a3b81a;color:#64748b'>"
             . bo_icon('alert', 14, $p['grey']) . " Not configured</span>";
       $sub  = "Nothing is being monitored yet";
-    } elseif ($nMissing > 0) {
+    } elseif ($coveragePending) {
+      $pill = "<span class='bo-pill' style='background:#94a3b81a;color:#64748b'>"
+            . bo_icon('refresh', 14, $p['grey']) . " Coverage check pending</span>";
+      $sub  = "Checking configured backup targets";
+    } elseif ($nMissing > 0 || $q['none'] > 0 || $q['partial'] > 0) {
+      $affected = max($nMissing, $q['none'] + $q['partial']);
       $pill = "<span class='bo-pill bo-pill-warn'>" . bo_icon('alert', 14, $p['amber'])
-            . " $nMissing target" . ($nMissing > 1 ? 's' : '') . " missing</span>";
+            . " $affected dataset" . ($affected > 1 ? 's need' : ' needs') . " attention</span>";
       $sub  = "Coverage across " . count($st['rows']) . " datasets";
     } else {
       $pill = "<span class='bo-pill bo-pill-ok'>" . bo_icon('check', 14, $p['green'])
@@ -848,10 +895,14 @@ if (!function_exists('bo_render')) {
     ];
 
     $bits = [];
-    if ($q['full'])    $bits[] = "<span style='color:{$p['green']}'>{$q['full']} full</span>";
-    if ($q['syncing']) $bits[] = "<span style='color:{$p['green']}'>{$q['syncing']} syncing</span>";
-    if ($q['partial']) $bits[] = "<span style='color:{$p['amber']}'>{$q['partial']} partial</span>";
-    if ($q['none'])    $bits[] = "<span style='color:{$p['red']}'>{$q['none']} none</span>";
+    if ($coveragePending) {
+      $bits[] = "<span style='color:{$p['grey']}'>checking configured targets</span>";
+    } else {
+      if ($q['full'])    $bits[] = "<span style='color:{$p['green']}'>{$q['full']} full</span>";
+      if ($q['syncing']) $bits[] = "<span style='color:{$p['green']}'>{$q['syncing']} syncing</span>";
+      if ($q['partial']) $bits[] = "<span style='color:{$p['amber']}'>{$q['partial']} partial</span>";
+      if ($q['none'])    $bits[] = "<span style='color:{$p['red']}'>{$q['none']} none</span>";
+    }
 
     /* Same reasoning as the tile: no configuration is a distinct state, and a page
        full of zeroes claims to have measured something. */
@@ -875,8 +926,8 @@ if (!function_exists('bo_render')) {
     $out .= "</div><div class='bo-scorebox'>"
           . "<div class='bo-score-l'>Protection score</div>"
           . "<div class='bo-score-row'>"
-          . "<div class='bo-score-bar'><i style='width:{$q['pct']}%;background:$scol'></i></div>"
-          . "<div class='bo-score-n' style='color:$scol'>{$q['pct']}%</div></div>"
+          . "<div class='bo-score-bar'><i style='width:" . ($coveragePending ? 0 : $q['pct']) . "%;background:$scol'></i></div>"
+          . "<div class='bo-score-n' style='color:$scol'>" . ($coveragePending ? '?' : $q['pct'] . '%') . "</div></div>"
           . "<div class='bo-score-b'>" . implode(" &#183; ", $bits) . "</div>"
           . "</div></div>";
 
@@ -989,7 +1040,8 @@ if (!function_exists('bo_render')) {
         $word = $m['word'];
         if ($state === 'syncing') $word = 'uploading ' . round($c['pct']) . '%';
 
-        $tip = $cloudFull[$sk] . " - " . $cloudTool[$sk] . "\n";
+        $cellTool = isset($c['tool']) ? bo_tool_label($c['tool']) : $cloudTool[$sk];
+        $tip = $cloudFull[$sk] . " - " . $cellTool . "\n";
         if ($state === 'ok') {
           $tip .= "Last backup: " . strip_tags(bo_when($c['ts']));
           if (($c['rev'] ?? '') !== '') $tip .= " (revision {$c['rev']})";
@@ -1000,7 +1052,7 @@ if (!function_exists('bo_render')) {
         } else {
           $tip .= $m['tip'];
         }
-        $tip .= "\nSource: /mnt/user/" . $r['share'];
+        $tip .= "\nSource: " . bo_repo_root($r['share']);
 
         $out .= "<div class='bo-cell' title='" . $h($tip) . "'>" . $m['svg']
               . " <span style='color:" . $m['colour'] . "'>" . $h($word) . "</span></div>";
@@ -1032,11 +1084,11 @@ if (!function_exists('bo_render')) {
 
         $out .= "<div class='bo-detr'>"
               . "<span class='bo-detc'>" . $m['svg'] . " " . $h($cloudFull[$sk])
-              . " <span class='bo-dim'>" . $h($cloudTool[$sk]) . "</span></span>"
+              . " <span class='bo-dim'>" . $h(isset($c['tool']) ? bo_tool_label($c['tool']) : $cloudTool[$sk]) . "</span></span>"
               . "<span class='bo-dets' style='color:" . $m['colour'] . "'>" . $detail . "</span></div>";
       }
       $out .= "<div class='bo-detr bo-detp'>"
-            . "<span class='bo-detc'>/mnt/user/" . $h($r['share']) . "</span>"
+            . "<span class='bo-detc'>" . $h(bo_repo_root($r['share'])) . "</span>"
             . "<span class='bo-dets'>" . number_format($r['files']) . " files &#183; "
             . bo_bytes($r['bytes']) . "</span></div>";
       $out .= "</div>";
@@ -1055,8 +1107,9 @@ if (!function_exists('bo_render')) {
       if ($g['tool'] === 'rclone') {
         $cmd = bo_conf('BW_SYNC_CMD', '');
       } else {
-        $storage = $g['cloud'] === 'm' ? ($map['m'][0] ?? 'mailru') : ($map['g'][0] ?? 'gdrive');
-        $cmd = 'cd ' . escapeshellarg('/mnt/user/' . $g['share'])
+        $fallback = ['g' => 'gdrive', 'd' => 'dropbox', 'm' => 'mailru'];
+        $storage = $map[$g['cloud']][0] ?? $fallback[$g['cloud']];
+        $cmd = 'cd ' . escapeshellarg(bo_repo_root($g['share']))
              . ' && ' . escapeshellarg(bo_dup_dir() . '/bin/duplicacy')
              . ' backup -storage ' . escapeshellarg($storage);
       }
