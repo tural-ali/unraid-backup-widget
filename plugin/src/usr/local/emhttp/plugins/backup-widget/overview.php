@@ -349,6 +349,61 @@ if (!function_exists('bo_dur')) {
   }
 }
 
+
+if (!function_exists('bo_quota')) {
+  /* Per-provider headroom, from the hourly collector.
+   *
+   * Free is taken as reported, not computed as total minus used. On Google Drive
+   * they differ: Google Photos and Family sharing draw on the same quota and
+   * appear as "other", so total-minus-used overstates what is actually available
+   * by well over a terabyte here.
+   *
+   * A provider with no usable figures returns null rather than zeroes - drawing a
+   * full bar because a call failed would be a false alarm about the one thing this
+   * panel exists to report honestly.
+   */
+  function bo_quota() {
+    static $q = null;
+    if ($q !== null) return $q;
+    $i = bo_ini('/var/local/emhttp/cloud-quota.ini');
+    $q = ['updated' => $i['q_updated'] ?? ''];
+    foreach (['g', 'd', 'm'] as $k) {
+      $state = $i["q_{$k}_state"] ?? '';
+      $total = (float)($i["q_{$k}_total"] ?? 0);
+      $free  = (float)($i["q_{$k}_free"]  ?? 0);
+      /* 'stale' carries the previous run's figures because this run's call failed.
+         Those are still worth showing - a provider's free space does not move much
+         in an hour - but the renderers must be able to say so, hence the flag and
+         the measurement time rather than a silent substitution. */
+      if (($state !== 'ok' && $state !== 'stale') || $total <= 0) { $q[$k] = null; continue; }
+      $q[$k] = [
+        'total' => $total,
+        'used'  => (float)($i["q_{$k}_used"] ?? 0),
+        'free'  => $free,
+        'other' => (float)($i["q_{$k}_other"] ?? 0),
+        /* Fullness from free, for the same reason as above. */
+        'pct'   => (int)round((1 - $free / $total) * 100),
+        'stale' => $state === 'stale',
+        'at'    => (int)($i["q_{$k}_at"] ?? 0),
+      ];
+    }
+    return $q;
+  }
+}
+
+if (!function_exists('bo_quota_colour')) {
+  /* Amber under 15% free, red under 5%. Dropbox is the one with a hard ceiling
+     that cannot be upgraded, so the warning needs to arrive with time to act. */
+  function bo_quota_colour($q) {
+    $p = bo_pal();
+    if (!$q) return $p['grey'];
+    $frac = $q['total'] > 0 ? $q['free'] / $q['total'] : 0;
+    if ($frac < 0.05) return $p['red'];
+    if ($frac < 0.15) return $p['amber'];
+    return $p['green'];
+  }
+}
+
 if (!function_exists('bo_plan')) {
   /* Which datasets go to which clouds, built from the config file.
    *
@@ -800,6 +855,52 @@ if (!function_exists('bo_render')) {
           . "<div class='bo-score-b'>" . implode(" &#183; ", $bits) . "</div>"
           . "</div></div>";
 
+
+    /* ---- provider capacity ---- */
+    /* The one question the coverage table cannot answer - not "is there a copy"
+       but "is there room for the next one". A provider filling up degrades
+       silently: the backup that fails is the one after the last successful run.
+       Used is drawn from free rather than from the reported used figure. On Google
+       Drive these disagree by more than a terabyte, because Google Photos and
+       Family sharing consume the same quota and arrive as "other". Free is the
+       number that decides whether tonight's run fits. */
+    $qt = bo_quota();
+    $out .= "<div class='bo-quota'>"
+          . "<div class='bo-quota-h'>" . bo_icon('files', 15, $p['grey'])
+          . " Provider capacity <span class='bo-dim'>"
+          . ($qt['updated'] !== '' ? "measured " . $h($qt['updated']) : "not measured yet")
+          . "</span></div><div class='bo-quota-g'>";
+    foreach (['g', 'd', 'm'] as $sk) {
+      $x   = $qt[$sk] ?? null;
+      $col = bo_quota_colour($x);
+      $out .= "<div class='bo-qc'>"
+            . "<div class='bo-qc-h'>" . bo_brand($sk, 16)
+            . "<span class='bo-qc-n'>" . $h($cloudFull[$sk]) . "</span>"
+            . "<span class='bo-tool2'>" . $h($cloudTool[$sk]) . "</span></div>";
+      if (!$x) {
+        /* Absent figures are stated. Drawing an empty bar would read as a full
+           provider and send the operator chasing a problem that is not there. */
+        $out .= "<div class='bo-qc-v' style='color:{$p['grey']}'>no figures</div>"
+              . "<div class='bo-qc-bar'></div>"
+              . "<div class='bo-qc-s'>The last check could not read this provider's quota</div>";
+      } else {
+        $note = $x['pct'] . "% used";
+        if ($x['other'] > 0) {
+          $note .= " &#183; " . bo_bytes($x['other']) . " of it is other data sharing this quota";
+        }
+        if ($x['stale']) {
+          $note .= " &#183; <span style='color:{$p['amber']}'>last check failed, figures from "
+                 . ($x['at'] > 0 ? bo_ago($x['at']) : 'an earlier run') . "</span>";
+        }
+        $out .= "<div class='bo-qc-v'><b style='color:$col'>" . bo_bytes($x['free'])
+              . "</b> free <span class='bo-dim'>of " . bo_bytes($x['total']) . "</span></div>"
+              . "<div class='bo-qc-bar'><i style='width:{$x['pct']}%;background:$col'></i></div>"
+              . "<div class='bo-qc-s'>" . $note . "</div>";
+      }
+      $out .= "</div>";
+    }
+    $out .= "</div></div>";
+
     /* ---- current transfer, its own section ---- */
     if ($st['act']) {
       $a   = $st['act'];
@@ -947,6 +1048,24 @@ if (!function_exists('bo_render')) {
           'cmd'   => '',
         ];
       }
+    }
+    /* A provider nearly full belongs in the attention list, not only in a bar.
+       Under 15% free the next large dataset may not fit, and the failure arrives
+       as a backup that silently did not happen. */
+    foreach (['g' => 'Google Drive', 'd' => 'Dropbox', 'm' => 'mail.ru'] as $sk => $name) {
+      $x = bo_quota()[$sk] ?? null;
+      if (!$x || $x['total'] <= 0) continue;
+      $frac = $x['free'] / $x['total'];
+      if ($frac >= 0.15) continue;
+      $tasks[] = [
+        'title' => $name,
+        'what'  => bo_bytes($x['free']) . " free of " . bo_bytes($x['total'])
+                 . " (" . $x['pct'] . "% used)",
+        'why'   => $frac < 0.05
+                   ? "Almost full. The next run is likely to fail part-way, which leaves an incomplete copy rather than an obvious error."
+                   : "Running low. Free space or raise the plan before the next large dataset needs it.",
+        'cmd'   => '',
+      ];
     }
     if ($st['rl_errors'] > 0) {
       $tasks[] = [

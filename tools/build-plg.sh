@@ -39,7 +39,7 @@ WEB="overview.php overview-widget.php overview-live.php overview-poll.php
 # cron entry pointing at a file it never installed - invisible on the machine it
 # was developed on, because the flash copy was already there by hand.
 SCRIPTS="duplicacy-status.sh duplicacy-coverage.sh backup-inventory.sh
-         rclone-live.sh rclone-progress.sh backup-history.sh"
+         rclone-live.sh rclone-progress.sh backup-history.sh cloud-quota.sh"
 
 b64() { base64 < "$1" | tr -d '\n'; }
 

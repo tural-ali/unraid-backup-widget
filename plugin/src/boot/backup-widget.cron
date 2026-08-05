@@ -3,6 +3,7 @@
 # Three tiers, because they cost very different amounts:
 #   1m   local log parsing only - no cloud calls, no filesystem walks
 #   5m   one Dropbox listing call, for byte-accurate mirror progress
+#   1h   one quota call per provider
 #   6h   all three clouds plus a du over every dataset
 #
 # Per-second figures do NOT come from cron: the page queries rclone's rc server
@@ -13,3 +14,7 @@
 5 */6 * * * bash /boot/config/plugins/backup-widget/scripts/duplicacy-coverage.sh >/dev/null 2>&1
 7 */6 * * * bash /boot/config/plugins/backup-widget/scripts/backup-inventory.sh >/dev/null 2>&1
 10 */6 * * * bash /boot/config/plugins/backup-widget/scripts/backup-history.sh >/dev/null 2>&1
+# Hourly is right for quota: it is three API calls, and free space does not move
+# fast enough to warrant more. Offset from the 6-hourly tier so a quota check never
+# lands in the same minute as a coverage pass competing for the same providers.
+17 * * * * bash /boot/config/plugins/backup-widget/scripts/cloud-quota.sh >/dev/null 2>&1

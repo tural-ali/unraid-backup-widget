@@ -319,3 +319,33 @@ That exposed a second gap: nothing had ever rendered with zero datasets. Both su
 an explicit empty state pointing at the settings page, and the page header no longer says
 "All protected" across zero datasets - which would have been the most misleading sentence in
 the whole plugin.
+
+## Provider capacity is measured separately from coverage
+
+Coverage answers "is there a copy". It cannot answer "will the next copy fit",
+and that is the other way this estate fails quietly: a provider that runs out
+does not raise an error at the moment it fills, it declines the next upload.
+
+`scripts/cloud-quota.sh` runs hourly - three `rclone about --json` calls, one per
+provider - and writes `/var/local/emhttp/cloud-quota.ini`. Both surfaces read it
+through `bo_quota()`.
+
+Two decisions inside it are not obvious:
+
+**Free is taken as reported, never computed as total minus used.** On Google Drive
+the two disagree by more than a terabyte, because Google Photos and Family sharing
+draw on the same quota and arrive in a separate `other` field. Free is the figure
+that decides whether tonight's run fits, so free is what gets stored and what the
+bars are drawn from.
+
+**A failed call carries the previous figures forward and marks them stale.** Seen
+in practice on the first day: Google Drive refused one hourly call and answered
+the next. Discarding the figures made the panel claim it knew nothing about a
+provider it had measured minutes earlier - and an empty bar reads as a full
+provider, which is precisely the false alarm this panel exists to avoid. The
+tile shows an amber dot, the page names the age of the figures.
+
+The collector never reports `ok` without numbers. An earlier version did, because
+its grep did not allow the whitespace rclone puts after a JSON colon, so every
+field came back empty while the state said fine - a renderer reading that would
+have drawn every provider at zero bytes free.

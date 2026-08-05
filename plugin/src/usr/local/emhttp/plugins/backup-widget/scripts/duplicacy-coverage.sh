@@ -62,8 +62,18 @@ seed_pct() {
   for pid in $(pgrep -f "$pat" 2>/dev/null); do
     cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null)
     [ "$cwd" = "/mnt/user/$repo" ] || continue
-    pct=$(grep -oE '[0-9]+\.[0-9]%$' "$log" 2>/dev/null | tail -1)
-    printf '%s' "${pct:-0.0%}"
+    # The percentage must come from THIS repo's section of the log, not simply the
+    # last percentage in it. The log is shared by every repo in a run, and an
+    # out-of-band job writing its own log left the widget reporting 95% for a
+    # transfer that was actually at 38%.
+    pct=$(awk -v r="$repo" '
+      index($0, "=== " r " ") == 1 { inrepo = 1; last = ""; next }
+      /^=== / { inrepo = 0 }
+      inrepo && match($0, /[0-9]+\.[0-9]%$/) { last = substr($0, RSTART, RLENGTH) }
+      END { print last }
+    ' "$log")
+    [ -n "$pct" ] || return 1
+    printf '%s' "$pct"
     return 0
   done
   return 1

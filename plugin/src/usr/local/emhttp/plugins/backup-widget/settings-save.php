@@ -126,8 +126,13 @@ $body = "# backup-widget configuration\n"
       . 'RCLONE_DIR="'   . $rcloneDir . "\"\n\n"
       . 'BW_STORAGE_G="' . $stG       . "\"\n"
       . 'BW_STORAGE_M="' . $stM       . "\"\n\n"
-      . "# repo:storages - a cloud absent for a share is reported as \"not configured\",\n"
-      . "# in grey, and is never counted as a missing backup.\n"
+      /* No double quotes and no colons in these comments. PHP parse_ini_file
+         returns false for the ENTIRE file if a comment contains both, which made
+         the plugin silently fall back to built-in defaults - indistinguishable
+         from working, until a setting needed to differ. */
+      . "# Per dataset, the Duplicacy storages it targets. A cloud absent for a\n"
+      . "# dataset is reported as not configured, in grey, and is never counted as\n"
+      . "# a missing backup.\n"
       . 'BW_SETS="'      . implode(' ', $sets) . "\"\n"
       . "# shares the rclone mirror covers; must match SHARES in your sync script\n"
       . 'BW_MIRRORED="'  . implode(' ', $selD) . "\"\n\n"
@@ -140,6 +145,15 @@ $body = "# backup-widget configuration\n"
 $tmp = $path . '.tmp';
 if (@file_put_contents($tmp, $body) === false) bws_fail("Cannot write $tmp", 500);
 @chmod($tmp, 0600);
+
+/* Read it back before it replaces the live file. A config PHP cannot parse is
+   worse than no config: every value reverts to a built-in default and the
+   dashboard keeps looking correct while ignoring what was saved. */
+$check = @parse_ini_file($tmp);
+if (!is_array($check) || !array_key_exists('BW_SETS', $check)) {
+  @unlink($tmp);
+  bws_fail('Refusing to save: the generated config is not parseable', 500);
+}
 if (!@rename($tmp, $path)) { @unlink($tmp); bws_fail("Cannot replace $path", 500); }
 
 header('Location: /Utilities/BackupWidget?saved=1');

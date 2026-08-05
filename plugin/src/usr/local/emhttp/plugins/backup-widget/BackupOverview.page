@@ -74,6 +74,22 @@ body.black, .black {
   letter-spacing:-.02em; }
 .bo-score-b { font-size:11.5px; }
 
+/* provider capacity - three cards, same cloud order as the table above */
+.bo-quota { margin-top:14px; padding:15px 18px; border:1px solid var(--bo-border);
+  border-radius:13px; background:var(--bo-bg); box-shadow:var(--bo-shadow); }
+.bo-quota-h { display:flex; align-items:center; gap:8px; font-size:13px;
+  font-weight:600; margin-bottom:13px; }
+.bo-quota-g { display:grid; grid-template-columns:repeat(3,1fr); gap:18px; }
+.bo-qc-h { display:flex; align-items:center; gap:7px; font-size:12px; margin-bottom:7px; }
+.bo-qc-n { font-weight:600; }
+.bo-qc-v { font-size:13px; margin-bottom:6px; font-variant-numeric:tabular-nums; }
+.bo-qc-v b { font-size:17px; font-weight:700; letter-spacing:-.01em; }
+.bo-qc-bar { height:7px; border-radius:4px; background:var(--bo-bg-alt);
+  border:1px solid var(--bo-border); overflow:hidden; }
+.bo-qc-bar i { display:block; height:100%; }
+.bo-qc-s { margin-top:6px; font-size:11px; color:var(--bo-fg-dim); }
+@media (max-width:900px) { .bo-quota-g { grid-template-columns:1fr; gap:14px; } }
+
 /* the transfer gets its own band */
 .bo-act { margin-top:14px; padding:15px 18px; border:1px solid var(--bo-border);
   border-radius:13px; background:var(--bo-bg); box-shadow:var(--bo-shadow); }

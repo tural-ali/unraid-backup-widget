@@ -242,6 +242,53 @@ if (!function_exists('bo_render_widget')) {
     }
     $out .= "</div>";
 
+
+    /* ---- how much room is left at each provider ---- */
+    /* Coverage answers "is there a copy". This answers "will the next one fit",
+       which is the other way the estate fails quietly - a full provider does not
+       break a backup loudly, it just stops accepting new data.
+       Placed under the grid and using the same three clouds in the same order, so
+       a column reads top to bottom as one provider. */
+    $qt = bo_quota();
+    $out .= "<div class='bw-q'>";
+    $out .= "<div class='bw-ql'><span>Space left</span><span class='bw-qu'>"
+          . $h($qt['updated'] !== '' ? $qt['updated'] : 'not measured') . "</span></div>";
+    $out .= "<div class='bw-qg'>";
+    foreach (['g', 'd', 'm'] as $sk) {
+      $x = $qt[$sk] ?? null;
+      if (!$x) {
+        /* No figures is said, not drawn. An empty bar here would read as a full
+           provider, which is the alarm this panel exists to raise honestly. */
+        $out .= "<div class='bw-qc' title='" . $h($cloudFull[$sk]) . " - no figures from the last check'>"
+              . "<div class='bw-qh'>" . bo_brand($sk, 11)
+              . "<span class='bw-qf' style='color:$grey'>&#8211;</span></div>"
+              . "<div class='bw-qb'></div></div>";
+        continue;
+      }
+      $col = bo_quota_colour($x);
+      $tip = $cloudFull[$sk] . "\n"
+           . bo_bytes($x['free']) . " free of " . bo_bytes($x['total']) . "\n"
+           . bo_bytes($x['used']) . " used";
+      if ($x['other'] > 0) {
+        $tip .= "\nof which " . bo_bytes($x['other'])
+              . " is other data on the same quota, not backups";
+      }
+      /* A carried-over figure is marked, not hidden. Without the mark the tile
+         would report an hour-old number as if it had just been measured. */
+      $flag = '';
+      if ($x['stale']) {
+        $tip .= "\nThe last check could not reach this provider - figures are from "
+              . ($x['at'] > 0 ? strip_tags(bo_ago($x['at'])) : 'an earlier run');
+        $flag = "<span class='bw-qs' style='color:$amber'>&#8226;</span>";
+      }
+      $out .= "<div class='bw-qc' title='" . $h($tip) . "'>"
+            . "<div class='bw-qh'>" . bo_brand($sk, 11)
+            . "<span class='bw-qf'>" . bo_bytes($x['free']) . "</span>$flag</div>"
+            . "<div class='bw-qb'><i style='width:{$x['pct']}%;background:$col'></i></div>"
+            . "</div>";
+    }
+    $out .= "</div></div>";
+
     [$nextTs, $nextWhat] = bo_next_run();
     /* One action, and it goes where the answers are. There is no Duplicacy web UI
        on this host to link to, and an endpoint that runs backups from a web page
