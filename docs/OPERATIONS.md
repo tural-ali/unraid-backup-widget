@@ -90,6 +90,10 @@ by hand.
 with reality. A cloud absent for a dataset renders grey; a cloud present but with no snapshot
 renders amber.
 
+**A local dataset should remain visible while cloud backup is suspended.** Mark it Paused in
+the settings page or add it to `BW_PAUSED`. The inventory collector still measures it, while
+the renderers exclude it from backup gaps and the backup score.
+
 **Mirror stuck at 99.x% and never green.** The coverage check's exclude filters do not match
 the sync's. They must be identical, or a filtered-out file makes a complete mirror look
 short.
@@ -115,9 +119,9 @@ matches your own SSH command line and kills the session issuing it.
 ## Bumping the version
 
 ```bash
-echo 2026.08.10 > VERSION
+echo 2026.08.14 > VERSION
 ./tools/build-plg.sh
-git commit -am "describe the change" && git tag v2026.08.10 && git push --follow-tags
+git commit -am "describe the change" && git tag v2026.08.14 && git push --follow-tags
 ```
 
 Version format is `YYYY.MM.DD`; the build script refuses anything else, so the tag, the

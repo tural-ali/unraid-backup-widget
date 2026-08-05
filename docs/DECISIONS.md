@@ -349,3 +349,15 @@ The collector never reports `ok` without numbers. An earlier version did, becaus
 its grep did not allow the whitespace rclone puts after a JSON colon, so every
 field came back empty while the state said fine - a renderer reading that would
 have drawn every provider at zero bytes free.
+
+## Paused datasets remain observable (2026.08.14)
+
+Removing a dataset from every cloud target also removed it from the dashboard.
+That hid useful local inventory at exactly the moment an operator paused cloud backup to reconsider the policy.
+
+`BW_PAUSED` now keeps those datasets visible with their current size and file count.
+Their provider cells use a distinct pause mark, their history reads `paused`, and they contribute neither gaps nor score slots.
+The settings page makes the state explicit and treats Paused as overriding selected cloud targets.
+
+The inventory collector includes paused datasets, holds a non-blocking `flock`, and writes through a per-process temporary file.
+The lock prevents overlapping scheduled and manual scans from corrupting the shared cache, while the atomic rename keeps readers on the last complete result.

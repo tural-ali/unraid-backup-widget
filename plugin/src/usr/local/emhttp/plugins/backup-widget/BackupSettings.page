@@ -54,6 +54,7 @@ if (!function_exists('bws_render')) {
     $h    = function ($s) { return htmlspecialchars((string)$s, ENT_QUOTES); };
     $sets = bo_sets();
     $mir  = bo_mirrored();
+    $paused = bo_paused();
     $map  = bo_storage_map();
     $all  = bws_all_storages();
     $csrf = function_exists('_var') ? _var($GLOBALS['var'] ?? [], 'csrf_token') : ($GLOBALS['var']['csrf_token'] ?? '');
@@ -93,11 +94,12 @@ if (!function_exists('bws_render')) {
     $out .= "<div class='bws-sec'><div class='bws-h'>Datasets to monitor</div>"
           . "<div class='bws-hint'>Tick a cloud only where that dataset is <em>supposed</em> to have a copy. "
           . "An unticked cloud is reported as \"not configured\" in grey, never as a missing backup - "
-          . "so leaving something off is a decision, not a warning.</div>";
+          . "so leaving something off is a decision, not a warning. Mark a dataset paused to keep it visible "
+          . "without counting it as unprotected.</div>";
 
     $out .= "<div class='bws-tbl'><div class='bws-tr bws-th'>"
           . "<div>Share</div><div>Google (Duplicacy)</div><div>2nd cloud (Duplicacy)</div>"
-          . "<div>Dropbox (rclone mirror)</div><div>Display name</div></div>";
+          . "<div>Dropbox (rclone mirror)</div><div>Paused</div><div>Display name</div></div>";
 
     foreach (bo_shares() as $share) {
       $repoStores = bws_repo_storages($share);
@@ -108,6 +110,7 @@ if (!function_exists('bws_render')) {
       $gOn = $has('g');
       $mOn = $has('m');
       $dOn = in_array($share, mirroredList(), true);
+      $pOn = in_array($share, $paused, true);
 
       /* A cloud can only be offered if the repo actually defines a storage for it.
          Offering an impossible target is how a dashboard ends up reporting a gap
@@ -130,6 +133,8 @@ if (!function_exists('bws_render')) {
 
       $out .= "<div><input type='checkbox' name='cloud_d[]' value='" . $h($share) . "'"
             . ($dOn ? " checked" : "") . "></div>";
+      $out .= "<div><input type='checkbox' name='paused[]' value='" . $h($share) . "'"
+            . ($pOn ? " checked" : "") . "></div>";
       $out .= "<div><input type='text' class='bws-name' name='title_" . $h($share) . "' value='"
             . $h(bo_title_for($share)) . "' spellcheck='false'></div>";
       $out .= "</div>";
@@ -185,7 +190,7 @@ if (!function_exists('mirroredList')) {
 .bws-bad { color:#b45309; font-weight:600; }
 .bws-tbl { border:1px solid #e2e8f0; border-radius:10px; overflow:hidden; }
 .black .bws-tbl { border-color:#3a3a3a; }
-.bws-tr { display:grid; grid-template-columns:1fr 150px 160px 180px 200px; align-items:center;
+.bws-tr { display:grid; grid-template-columns:1fr 140px 150px 170px 75px 190px; align-items:center;
   gap:10px; padding:9px 13px; border-top:1px solid #edf0f4; min-height:44px; }
 .black .bws-tr { border-color:#333; }
 .bws-tr:first-child { border-top:0; }

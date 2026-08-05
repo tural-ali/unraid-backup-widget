@@ -23,6 +23,10 @@ BW_SETS="raw-photos:gdrive,mailru videos:gdrive paperless:gdrive,mailru appdata:
 # Shares the rclone mirror covers. Must match SHARES in your sync script.
 BW_MIRRORED="videos raw-photos"
 
+# Datasets intentionally paused. They stay visible with current local size, but
+# are excluded from cloud gap and health calculations.
+BW_PAUSED=""
+
 # rclone rc endpoint, used for per-second transfer stats.
 BW_RC_ADDR=127.0.0.1:5572
 BW_RC_USER=dash

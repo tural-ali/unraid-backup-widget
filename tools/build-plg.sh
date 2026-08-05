@@ -3,10 +3,9 @@
 #
 # Why the files are embedded base64 rather than shipped as a .txz:
 #
-#   1. This is a PRIVATE repository. Unraid's plugin installer fetches URLs
-#      anonymously, so a raw.githubusercontent.com link to a txz would 404. An
-#      entirely self-contained .plg installs from the flash drive with no network
-#      access at all.
+#   1. An entirely self-contained .plg installs from the flash drive without
+#      fetching a second artifact. This also kept development installs working
+#      before the repository was public.
 #   2. The payload is PHP and JavaScript full of "<", ">" and "&". A .plg is XML,
 #      and Unraid's own installer parses it as such. Embedding source verbatim -
 #      even inside CDATA - is a standing invitation to break the manifest the
@@ -113,7 +112,7 @@ for f in overview.php overview-widget.php overview-live.php overview-poll.php \
 done
 
 for f in duplicacy-status.sh duplicacy-coverage.sh backup-inventory.sh \
-         rclone-live.sh rclone-progress.sh; do
+         rclone-live.sh rclone-progress.sh backup-history.sh cloud-quota.sh; do
   decode "$f" "$PLG/scripts/$f" 755
 done
 

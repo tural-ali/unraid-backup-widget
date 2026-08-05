@@ -84,19 +84,22 @@ $pick = function ($field) use ($shares) {
 $selG = $pick('cloud_g');
 $selM = $pick('cloud_m');
 $selD = $pick('cloud_d');
+$selP = $pick('paused');
 /* same ordering rule for the mirror list */
 $selD = array_values(array_unique(array_merge(
   array_values(array_intersect(bo_mirrored(), $selD)), $selD)));
+$selD = array_values(array_diff($selD, $selP));
 
 /* Preserve the order already in the config, appending anything new. Iterating the
    share list alphabetically instead would silently reorder the dashboard on the
    first save - a settings page should not rearrange the thing it configures. */
-$existing = array_keys(bo_sets());
+$existing = array_values(array_unique(array_merge(array_keys(bo_sets()), bo_paused())));
 $ordered  = array_values(array_intersect($existing, $shares));
 foreach ($shares as $s) if (!in_array($s, $ordered, true)) $ordered[] = $s;
 
 $sets = [];
 foreach ($ordered as $s) {
+  if (in_array($s, $selP, true)) continue;
   $st = [];
   if (in_array($s, $selG, true)) $st = array_merge($st, explode(',', $stG));
   if (in_array($s, $selM, true)) $st = array_merge($st, explode(',', $stM));
@@ -136,6 +139,8 @@ $body = "# backup-widget configuration\n"
       . 'BW_SETS="'      . implode(' ', $sets) . "\"\n"
       . "# shares the rclone mirror covers; must match SHARES in your sync script\n"
       . 'BW_MIRRORED="'  . implode(' ', $selD) . "\"\n\n"
+      . "# datasets intentionally paused; shown but excluded from backup health\n"
+      . 'BW_PAUSED="'    . implode(' ', $selP) . "\"\n\n"
       . 'BW_RC_ADDR="'   . $rcAddr . "\"\n"
       . 'BW_RC_USER="'   . $rcUser . "\"\n"
       . ($titles ? "\n" . 'BW_TITLES="' . implode(';', $titles) . "\"\n" : "");

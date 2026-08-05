@@ -81,6 +81,11 @@ if (!function_exists('backup_widget_render_tile')) {
       . ".bw-spk-none { font-size:10px; opacity:.35; letter-spacing:1px; }"
       . ".bw-ds { display:flex; align-items:center; gap:6px; min-width:0; }"
       . ".bw-dsn { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }"
+      . ".bw-pause { display:inline-block; margin-left:4px; padding:1px 5px; border-radius:8px;"
+      . " background:#64748b1f; color:#64748b; font-size:8px; font-weight:700;"
+      . " text-transform:uppercase; letter-spacing:.04em; vertical-align:1px; }"
+      . ".bw-paused-history { color:#64748b; font-size:8px; text-transform:uppercase;"
+      . " letter-spacing:.04em; }"
       . ".bw-det { display:none; padding:2px 0 7px 19px; }"
       /* Cloud and its state on ONE line: the previous two-block layout made you
          cross between columns and count positions to pair them up. */

@@ -59,6 +59,9 @@ Tick a cloud only where a dataset is *supposed* to have a copy. An unticked clou
 "not configured" in grey and is never counted as a missing backup - leaving something off is
 recorded as a decision, not a warning.
 
+Mark a dataset **Paused** when its cloud backup is intentionally suspended.
+It remains visible with its current local size and file count, while its cloud cells and history show `paused` and it is excluded from backup-score and gap calculations.
+
 It writes one file, `/boot/config/plugins/backup-widget/config`, in `KEY="value"` form so PHP
 and bash both read it directly. Editing it by hand still works; see
 `plugin/src/boot/config.example`. With no config at all the plugin runs on defaults.
@@ -119,9 +122,9 @@ Date-based, Unraid convention: `YYYY.MM.DD` in `VERSION`, which `tools/build-plg
 into the manifest. Bump it, rebuild, commit, tag:
 
 ```bash
-echo 2026.08.10 > VERSION
+echo 2026.08.14 > VERSION
 ./tools/build-plg.sh
-git commit -am "..." && git tag v2026.08.10 && git push --follow-tags
+git commit -am "..." && git tag v2026.08.14 && git push --follow-tags
 ```
 
 The tag, the manifest and the installed plugin all read the same value, so there is no way

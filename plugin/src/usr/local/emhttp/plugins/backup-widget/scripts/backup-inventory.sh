@@ -11,6 +11,8 @@
 #
 # Output: /var/local/emhttp/backup-inventory.ini
 set -u
+exec 9>/var/run/backup-widget-inventory.lock
+flock -n 9 || exit 0
 # Configuration, shared with the settings page and the renderers. KEY="value" so
 # this file is both parse_ini_file-able and source-able - one file, no second
 # parser to drift. Absent config falls back to the defaults below.
@@ -20,12 +22,14 @@ CONF=/boot/config/plugins/backup-widget/config
 : "${RCLONE_DIR:=/mnt/user/appdata/rclone}"
 
 OUT=/var/local/emhttp/backup-inventory.ini
-TMP="$OUT.tmp"
+TMP="$OUT.tmp.$$"
+trap 'rm -f "$TMP"' EXIT
 
 # Datasets come from the config: whatever has a Duplicacy target or is mirrored.
 SHARES=$(
   { for e in ${BW_SETS:-}; do echo "${e%%:*}"; done
     for m in ${BW_MIRRORED:-}; do echo "$m"; done
+    for p in ${BW_PAUSED:-}; do echo "$p"; done
   } | awk 'NF' | sort -u | tr '\n' ' '
 )
 [ -n "$(echo $SHARES | tr -d ' ')" ] || SHARES="raw-photos videos paperless immich appdata"
@@ -45,3 +49,4 @@ done
 echo "inv_total_bytes=\"$total\"" >> "$TMP"
 echo "inv_updated=\"$(date '+%s')\"" >> "$TMP"
 mv "$TMP" "$OUT"
+trap - EXIT

@@ -60,13 +60,14 @@ most important structural decision in the plugin: a tile that says "protected" w
 page says "missing backup" would destroy trust in both, and the only way to guarantee they
 agree is to give them one source of truth.
 
-It returns, per dataset: the per-cloud cell states, how many targets exist, how many hold a
-copy, size, file count, and the newest snapshot time. Plus estimate-wide figures: total
-bytes, health percentage, the list of missing backups, and the current activity.
+It returns, per dataset: the per-cloud cell states, whether monitoring is paused, how many
+targets exist, how many hold a copy, size, file count, and the newest snapshot time.
+It also returns estate-wide figures: total bytes, health percentage, the list of missing
+backups, and the current activity.
 
 ## Cell states
 
-All five come from `bo_mark()`, so the tile and the page draw them identically.
+All six come from `bo_mark()`, so the tile and the page draw them identically.
 
 | State | Mark | Word on the surface | Meaning |
 |---|---|---|---|
@@ -75,6 +76,7 @@ All five come from `bo_mark()`, so the tile and the page draw them identically.
 | `missing` | filled amber dot | `never backed up` | configured target, nothing uploaded |
 | `unknown` | dashed grey ring | `not checked` | not checked since boot |
 | `na` | filled pale grey dot | `not configured` | deliberately not sent here |
+| `paused` | slate pause mark | `paused` | deliberately visible but excluded from backup health |
 
 Words, not timestamps. The exact time a backup ran only matters once something is wrong, so
 it lives in the row expansion and the hover tooltip. Each dataset also carries an overall dot

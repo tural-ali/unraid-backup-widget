@@ -111,6 +111,7 @@ if (!function_exists('bo_render_widget')) {
     if ($q['syncing']) $bits[] = "<span style='color:$green'>{$q['syncing']} syncing</span>";
     if ($q['partial']) $bits[] = "<span style='color:$amber'>{$q['partial']} partial</span>";
     if ($q['none'])    $bits[] = "<span style='color:$red'>{$q['none']} none</span>";
+    if (!empty($st['paused'])) $bits[] = "<span style='color:$grey'>{$st['paused']} paused</span>";
 
     $out .= "<div class='bw-head'>"
           . "<div class='bw-gauge'>" . bw_gauge($q['pct'], $gcol)
@@ -172,7 +173,9 @@ if (!function_exists('bo_render_widget')) {
       $did = 'bw-d-' . preg_replace('/[^a-z0-9]+/i', '-', $r['share']);
       $out .= "<div class='bw-gr bw-row' onclick=\"bwToggle('$did')\" title='Click for detail'>"
             . "<span class='bw-ds'>" . bo_icon($r['icon'], 13, $r['tint'])
-            . "<span class='bw-dsn'>" . $h($r['title']) . "</span></span>";
+            . "<span class='bw-dsn'>" . $h($r['title'])
+            . (!empty($r['paused']) ? " <span class='bw-pause'>Paused</span>" : "")
+            . "</span></span>";
       foreach (['g', 'd', 'm'] as $sk) {
         $c = $r['cells'][$sk];
         $state = $c['state'] ?? 'na';
@@ -190,6 +193,8 @@ if (!function_exists('bo_render_widget')) {
           $tip .= "Never backed up\nTarget is configured but has received nothing yet";
         } elseif ($state === 'unknown') {
           $tip .= "Not checked since boot";
+        } elseif ($state === 'paused') {
+          $tip .= "Cloud backup paused by policy";
         } else {
           $tip .= "Not configured\nThis dataset is not sent to this cloud";
         }
@@ -197,7 +202,9 @@ if (!function_exists('bo_render_widget')) {
 
         $out .= "<span class='bw-mk' title='" . $h($tip) . "'>" . $m['svg'] . "</span>";
       }
-      $out .= "<span class='bw-spk'>" . bo_sparkline($r['share']) . "</span>";
+      $out .= "<span class='bw-spk'>" . (!empty($r['paused'])
+            ? "<span class='bw-paused-history'>paused</span>"
+            : bo_sparkline($r['share'])) . "</span>";
       $out .= "</div>";
 
       /* Collapsed detail. One row per cloud, cloud on the left and its state on
@@ -220,6 +227,8 @@ if (!function_exists('bo_render_widget')) {
           $txt = "<span style='color:$blue'>uploading " . round($c['pct']) . "%</span>";
         } elseif ($state === 'unknown') {
           $txt = "<span style='color:$grey'>not checked yet</span>";
+        } elseif ($state === 'paused') {
+          $txt = "<span style='color:#64748b'>paused</span>";
         } else {
           $txt = "<span style='color:$amber'>never backed up</span>";
         }

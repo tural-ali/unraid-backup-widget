@@ -162,6 +162,14 @@ if (!function_exists('bo_mirrored')) {
   }
 }
 
+if (!function_exists('bo_paused')) {
+  function bo_paused() {
+    $raw = trim(bo_conf('BW_PAUSED', ''));
+    if ($raw === '') return [];
+    return array_values(array_filter(preg_split('/\s+/', $raw)));
+  }
+}
+
 if (!function_exists('bo_bytes')) {
   /* Decimal units, matching how cloud providers quote quota - Dropbox's "3 TB"
      is 3.002 TiB, and showing TiB here would make every figure disagree with
@@ -417,24 +425,29 @@ if (!function_exists('bo_plan')) {
   function bo_plan() {
     $sets     = bo_sets();
     $mirrored = bo_mirrored();
+    $paused   = bo_paused();
     $map      = bo_storage_map();
 
-    /* Display order: the configured order of BW_SETS, then any mirror-only share
-       that BW_SETS does not mention. */
+    /* Display order: configured targets, mirror-only shares, then deliberately
+       paused datasets. Paused rows remain visible but never lower the score. */
     $order = array_keys($sets);
     foreach ($mirrored as $m) if (!in_array($m, $order, true)) $order[] = $m;
+    foreach ($paused as $p) if (!in_array($p, $order, true)) $order[] = $p;
 
     $plan = [];
     foreach ($order as $share) {
       if (!is_dir('/mnt/user/' . $share)) continue;   // configured but gone
+      $isPaused = in_array($share, $paused, true);
       $targets = [];
-      foreach ($sets[$share] ?? [] as $storage) {
-        foreach (['g', 'm'] as $k) {
-          if (in_array($storage, $map[$k], true)) $targets[$k] = 'duplicacy';
+      if (!$isPaused) {
+        foreach ($sets[$share] ?? [] as $storage) {
+          foreach (['g', 'm'] as $k) {
+            if (in_array($storage, $map[$k], true)) $targets[$k] = 'duplicacy';
+          }
         }
+        if (in_array($share, $mirrored, true)) $targets['d'] = 'rclone';
       }
-      if (in_array($share, $mirrored, true)) $targets['d'] = 'rclone';
-      if (!$targets) continue;                        // nothing to report on
+      if (!$targets && !$isPaused) continue;          // nothing to report on
 
       $plan[$share] = [
         'key'     => 'cov_' . str_replace('-', '_', $share),
@@ -442,6 +455,7 @@ if (!function_exists('bo_plan')) {
         'icon'    => bo_icon_for($share),
         'tint'    => bo_tint_for($share),
         'targets' => $targets,
+        'paused'  => $isPaused,
       ];
     }
     return $plan;
@@ -490,8 +504,10 @@ if (!function_exists('bo_state')) {
         $have[$b[0]] = isset($b[1]) ? $b[1] : '-';
       }
 
+      $isPaused = !empty($spec['paused']);
       $cells = []; $ok = 0; $n = 0; $rowNewest = null;
       foreach (['g', 'd', 'm'] as $sk) {
+        if ($isPaused) { $cells[$sk] = ['state' => 'paused']; continue; }
         if (!isset($spec['targets'][$sk])) { $cells[$sk] = ['state' => 'na']; continue; }
         $n++; $slots++;
         $tool = $spec['targets'][$sk];
@@ -519,6 +535,7 @@ if (!function_exists('bo_state')) {
       $rows[] = [
         'share' => $share, 'title' => $spec['title'], 'icon' => $spec['icon'], 'tint' => $spec['tint'],
         'cells' => $cells, 'ok' => $ok, 'targets' => $n,
+        'paused' => $isPaused,
         'bytes' => (float)$get($inv, $ik . '_bytes', '0'),
         'files' => (int)$get($inv, $ik . '_files', '0'),
         'last'  => $rowNewest,
@@ -576,8 +593,12 @@ if (!function_exists('bo_state')) {
     $syncing = 0;
     foreach ($rows as $r) foreach ($r['cells'] as $c) if (($c['state'] ?? '') === 'syncing') $syncing++;
 
+    $pausedCount = 0;
+    foreach ($rows as $r) if (!empty($r['paused'])) $pausedCount++;
+
     return [
       'rows' => $rows, 'gaps' => $gaps, 'act' => $act, 'syncing' => $syncing,
+      'paused' => $pausedCount,
       'total_bytes' => (float)$get($inv, 'inv_total_bytes', '0'),
       'health' => $slots > 0 ? (int)round($covered * 100 / $slots) : 0,
       'covered' => $covered, 'slots' => $slots,
@@ -729,6 +750,9 @@ if (!function_exists('bo_mark')) {
       case 'unknown':
         return ['svg' => "<svg width='$px' height='$px' viewBox='0 0 12 12'><circle cx='6' cy='6' r='4.3' fill='none' stroke='{$p['grey']}' stroke-width='1.4' stroke-dasharray='2 2'/></svg>",
                 'tip' => 'Not checked since boot', 'word' => 'not checked', 'colour' => $p['grey']];
+      case 'paused':
+        return ['svg' => "<svg width='$px' height='$px' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5' fill='#64748b'/><rect x='4' y='3.3' width='1.3' height='5.4' rx='.4' fill='white'/><rect x='6.7' y='3.3' width='1.3' height='5.4' rx='.4' fill='white'/></svg>",
+                'tip' => 'Cloud backup paused by policy', 'word' => 'paused', 'colour' => '#64748b'];
       default:
         return ['svg' => "<svg width='$px' height='$px' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5' fill='{$p['pale']}'/></svg>",
                 'tip' => 'Not configured - this dataset is not meant to go to this cloud',
@@ -741,6 +765,7 @@ if (!function_exists('bo_row_state')) {
   /* A dataset's overall state, for the status dot in front of its name. Lets you
      spot the problem rows before reading any provider column. */
   function bo_row_state($r) {
+    if (!empty($r['paused'])) return 'paused';
     if ($r['targets'] < 1) return 'na';
     $ok = 0; $half = 0; $miss = 0;
     foreach ($r['cells'] as $c) {
@@ -950,7 +975,8 @@ if (!function_exists('bo_render')) {
             . "<span title='" . $h(ucfirst($rm['word'])) . "'>" . $rm['svg'] . "</span>"
             . "<span class='bo-ds-ico' style='background:" . $r['tint'] . "1a'>"
             . bo_icon($r['icon'], 15, $r['tint']) . "</span>"
-            . "<span class='bo-dsn'><b>" . $h($r['title']) . "</b>"
+            . "<span class='bo-dsn'><b>" . $h($r['title'])
+            . (!empty($r['paused']) ? " <span class='bo-pause'>Paused</span>" : "") . "</b>"
             . "<span class='bo-dssz'>" . bo_bytes($r['bytes']) . "</span></span></div>";
 
       foreach (['g', 'd', 'm'] as $sk) {
@@ -980,7 +1006,9 @@ if (!function_exists('bo_render')) {
               . " <span style='color:" . $m['colour'] . "'>" . $h($word) . "</span></div>";
       }
 
-      $out .= "<div class='bo-cell'>" . bo_sparkline($r['share'], 15, 5) . "</div>";
+      $out .= "<div class='bo-cell'>" . (!empty($r['paused'])
+            ? "<span class='bo-paused-history'>paused</span>"
+            : bo_sparkline($r['share'], 15, 5)) . "</div>";
       $out .= "<div class='bo-chev'>" . bo_icon('chev', 14, $p['grey']) . "</div>";
       $out .= "</div>";
 

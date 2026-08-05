@@ -135,6 +135,11 @@ body.black, .black {
   align-items:center; justify-content:center; flex:none; }
 .bo-dsn { display:flex; flex-direction:column; line-height:1.25; min-width:0; }
 .bo-dsn b { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.bo-pause { display:inline-block; margin-left:5px; padding:1px 6px; border-radius:9px;
+  background:#64748b1f; color:#64748b; font-size:9px; text-transform:uppercase;
+  letter-spacing:.04em; vertical-align:1px; }
+.bo-paused-history { color:#64748b; font-size:9px; text-transform:uppercase;
+  letter-spacing:.04em; }
 /* Size is reference, not something read on every visit. */
 .bo-dssz { font-size:10.5px; color:var(--bo-fg-faint); font-variant-numeric:tabular-nums; }
 .bo-cell { display:flex; align-items:center; gap:7px; font-size:12px; white-space:nowrap;
