@@ -35,7 +35,9 @@ require_once '/usr/local/emhttp/plugins/backup-widget/overview-widget.php';
 if (!function_exists('backup_widget_render_tile')) {
   function backup_widget_render_tile() {
     $css = "<style>"
-      . ".bw { font-size:11.5px; line-height:1.45; }"
+      /* Side padding so nothing runs to the tile's edge; rows reach back into
+         it (below) so their hover tint has room without shifting the text. */
+      . ".bw { font-size:11.5px; line-height:1.45; padding:0 5px; }"
       . ".bw svg { display:inline-block; vertical-align:-2px; flex:none; }"
       . ".bw-head { display:flex; align-items:center; gap:12px; }"
       . ".bw-gauge { text-align:center; flex:none; }"
@@ -68,9 +70,11 @@ if (!function_exists('backup_widget_render_tile')) {
       . ".bw-act-s span:nth-child(3) { text-align:right; }"
       . ".bw-idle { margin-top:9px; padding-top:8px; border-top:1px solid #dcdcdc; font-size:11px; opacity:.6; }"
       . ".bw-grid { margin-top:9px; padding-top:7px; border-top:1px solid #dcdcdc; }"
-      /* Fixed columns, and roomier rows - 20px was cramped. */
-      . ".bw-gr { display:grid; grid-template-columns:1fr 30px 30px 30px 30px; align-items:center;"
-      . " gap:3px; min-height:33px; }"
+      /* One fixed column per destination, then the history. The history column
+         is as wide as its five bars (5 x 8.4px); at 30px they spilled past the
+         tile's right edge. */
+      . ".bw-gr { display:grid; grid-template-columns:1fr repeat(3,30px) 46px; align-items:center;"
+      . " column-gap:4px; min-height:33px; margin:0 -5px; padding:0 5px; }"
       . ".bw-gh { min-height:24px; padding-bottom:2px; }"
       . ".bw-row { cursor:pointer; border-radius:4px; }"
       . ".bw-row:hover { background:rgba(20,71,196,.07); }"
@@ -202,7 +206,7 @@ if (!function_exists('backup_widget_render_tile')) {
       . "})();"
       . "</script>";
 
-    return "<tbody title='Backup coverage across Google Drive, Dropbox and mail.ru'>"
+    return "<tbody title='Backup coverage across Google Drive, Dropbox and Amazon Photos'>"
       /* "Backup Health", not "Backup": this is a monitoring dashboard, not the
          backup engine, and the generic name invited that confusion. */
       . "<tr><td><i class='fa fa-shield' style='margin-right:6px'></i>Backup Health "

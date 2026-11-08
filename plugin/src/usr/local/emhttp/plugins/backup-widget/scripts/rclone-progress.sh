@@ -19,6 +19,7 @@ set -u
 # this file is both parse_ini_file-able and source-able - one file, no second
 # parser to drift. Absent config falls back to the defaults below.
 CONF=/boot/config/plugins/backup-widget/config
+# shellcheck source=/dev/null
 [ -f "$CONF" ] && . "$CONF"
 : "${DUP_DIR:=/mnt/user/appdata/duplicacy}"
 : "${RCLONE_DIR:=/mnt/user/appdata/rclone}"
@@ -29,8 +30,6 @@ OUT=/var/local/emhttp/rclone-progress.ini
 TMP="$OUT.tmp"
 SAMPLE=$R/.progress-sample
 TOTALS=/var/local/emhttp/backup-inventory.ini
-
-EX=(--exclude '.DS_Store' --exclude '._*' --exclude '.duplicacy/**' --exclude '**/@eaDir/**')
 
 blank() { : > "$TMP"; mv "$TMP" "$OUT"; exit 0; }
 

@@ -19,6 +19,7 @@
 # Output: /var/local/emhttp/cloud-quota.ini
 set -u
 CONF=/boot/config/plugins/backup-widget/config
+# shellcheck source=/dev/null
 [ -f "$CONF" ] && . "$CONF"
 : "${RCLONE_DIR:=/mnt/user/appdata/rclone}"
 
@@ -28,7 +29,7 @@ RC="$RCLONE_DIR/bin/rclone"
 RCONF="$RCLONE_DIR/config/rclone.conf"
 
 # remote:key - key matches the cloud letters the renderers already use
-REMOTES="Gdrive:g dropbox:d mailru:m"
+REMOTES="Gdrive:g dropbox:d"
 
 now=$(date +%s)
 

@@ -108,11 +108,11 @@ plugin/src/                   the actual sources
     BackupOverview.page       Tools page
     BackupWidget.page         dashboard tile
     BackupSettings.page       Settings → Utilities page
-    scripts/                  the six cron collectors
+    scripts/                  the cron collectors
   boot/
     backup-widget.cron        collector schedule
     config.example            documented defaults
-tools/build-plg.sh            regenerates the manifest from src/
+tools/build-plg.sh            refreshes the manifest payloads from src/ (--check verifies)
 reference/                    the host's own backup jobs, for context only
 docs/                         architecture, decisions, operations
 ```

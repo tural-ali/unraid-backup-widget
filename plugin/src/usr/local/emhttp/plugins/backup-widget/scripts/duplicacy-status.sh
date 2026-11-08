@@ -7,6 +7,7 @@ set -u
 # this file is both parse_ini_file-able and source-able - one file, no second
 # parser to drift. Absent config falls back to the defaults below.
 CONF=/boot/config/plugins/backup-widget/config
+# shellcheck source=/dev/null
 [ -f "$CONF" ] && . "$CONF"
 : "${DUP_DIR:=/mnt/user/appdata/duplicacy}"
 : "${RCLONE_DIR:=/mnt/user/appdata/rclone}"
@@ -56,7 +57,12 @@ for p in $(pgrep -f "duplicacy backup" 2>/dev/null); do
 done
 
 # Most recent progress line from whichever log was touched last
-newest=$(ls -t "$D"/logs/*-"$(date +%F)".log 2>/dev/null | head -1)
+# A seed that runs for days writes one log which never carries today's date, so
+# the date-suffixed glob alone can never see it and the tile falls back to
+# whichever nightly repo finished last - that is how "family-archive 97%" was
+# really appdata finishing. Consider the undated backup-*.log files too and let
+# mtime decide, which is what "most recently touched" was always meant to mean.
+newest=$(ls -t "$D"/logs/*-"$(date +%F)".log "$D"/logs/backup-*.log 2>/dev/null | head -1)
 [ -n "$newest" ] || newest="$LOG"
 if [ -f "$newest" ]; then
   # backup.sh appends every repo to one log in sequence, and progress lines do
@@ -93,6 +99,10 @@ done_today=$(grep -hoE "Backup for /mnt/user/[a-z-]+ at revision [0-9]+ complete
   echo "status=\"$status\""
   echo "repo=\"$repo\""
   echo "storage=\"$storage\""
+# Nothing is running, so any percentage still sitting in these variables belongs
+# to a finished run and describes nothing current. Publishing it is what made the
+# tile read "family-archive 97%, ETA 00:00:01" for days after the seed had ended.
+if [ "$status" = "idle" ]; then pct=""; speed=""; eta=""; fi
   echo "pct=\"$pct\""
   echo "speed=\"$speed\""
   echo "eta=\"$eta\""

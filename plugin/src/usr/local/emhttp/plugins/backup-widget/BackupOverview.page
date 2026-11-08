@@ -115,11 +115,11 @@ body.black, .black {
 }
 
 .bo-table-scroll { overflow-x:auto; margin-top:14px; }
-.bo-table { min-width:930px; border:1px solid var(--bo-border); border-radius:13px;
+.bo-table { min-width:1080px; border:1px solid var(--bo-border); border-radius:13px;
   overflow:hidden; background:var(--bo-bg); box-shadow:var(--bo-shadow); }
 /* Fixed widths: with fr units a cell changing from "protected" to "uploading 43%"
    resized its column and shifted every row on each 30s repaint. */
-.bo-tr { display:grid; grid-template-columns:1fr 150px 158px 150px 96px 26px;
+.bo-tr { display:grid; grid-template-columns:1fr repeat(3,150px) 96px 26px;
   align-items:center; gap:12px; padding:11px 18px; border-top:1px solid var(--bo-line);
   min-height:52px; }
 .bo-tr:first-child { border-top:0; }

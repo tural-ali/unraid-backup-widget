@@ -4,8 +4,8 @@
  * Reuses bo_state() from overview.php, so the tile and the full page can never
  * disagree - a widget claiming "protected" while the page shows a missing backup
  * is worse than no widget at all. Only the layout differs: a dashboard tile is
- * about 330px wide, so the seven-column table becomes one line per dataset with
- * three status marks, and the five stat cards collapse into a gauge and a line.
+ * about 330px wide, so the table becomes one line per dataset with one status
+ * mark per destination, and the stat cards collapse into a gauge and a line.
  *
  * Wording rules, from review:
  *   - "backup targets missing", never "gaps". Gap is our jargon.
@@ -169,16 +169,18 @@ if (!function_exists('bo_render_widget')) {
     }
 
     /* ---- per-dataset grid ---- */
-    $cloudLabel = ['g' => 'Google', 'd' => 'Dropbox', 'm' => 'Mail.ru'];
-    $cloudFull  = ['g' => 'Google Drive', 'd' => 'Dropbox', 'm' => 'mail.ru'];
-    $dropboxTool = bo_mirrored() ? 'Duplicacy / rclone' : 'Duplicacy';
-    $cloudTool  = ['g' => 'Duplicacy', 'd' => $dropboxTool, 'm' => 'Duplicacy'];
+    /* One column per destination, from bo_clouds(), so the tile and the page
+       always have the same columns in the same order. Amazon Photos and the
+       Google Drive clone sit beside the Duplicacy targets because they are real
+       copies; their tooltips say what kind (no versions). */
+    $clouds    = bo_clouds();
+    $cloudTool = bo_column_tools($st['rows']);
 
     $out .= "<div class='bw-grid'>";
     $out .= "<div class='bw-gr bw-gh'><span></span>";
-    foreach (['g', 'd', 'm'] as $sk) {
-      $out .= "<span class='bw-mk' title='" . $h($cloudFull[$sk] . ' via ' . $cloudTool[$sk]) . "'>"
-            . bo_brand($sk, 14) . "<span class='bw-cl'>" . $h($cloudLabel[$sk]) . "</span></span>";
+    foreach ($clouds as $sk => $cl) {
+      $out .= "<span class='bw-mk' title='" . $h($cl['full'] . ' via ' . $cloudTool[$sk]) . "'>"
+            . bo_brand($sk, 14) . "<span class='bw-cl'>" . $h($cl['short']) . "</span></span>";
     }
     $out .= "<span class='bw-spk-h' title='State at each of the last 14 coverage checks'>history</span></div>";
 
@@ -189,30 +191,14 @@ if (!function_exists('bo_render_widget')) {
             . "<span class='bw-dsn'>" . $h($r['title'])
             . (!empty($r['paused']) ? " <span class='bw-pause'>Paused</span>" : "")
             . "</span></span>";
-      foreach (['g', 'd', 'm'] as $sk) {
+      foreach ($clouds as $sk => $cl) {
         $c = $r['cells'][$sk];
         $state = $c['state'] ?? 'na';
         $m = bw_mark($state, $green, $amber, $blue, $grey);
 
         /* Multi-line tooltip: everything you would otherwise expand the row for,
            with no extra UI. Native title attributes honour newlines. */
-        $cellTool = isset($c['tool']) ? bo_tool_label($c['tool']) : $cloudTool[$sk];
-        $tip = $cloudFull[$sk] . " - " . $cellTool . "\n";
-        if ($state === 'ok') {
-          $tip .= "Last backup: " . strip_tags(bo_when($c['ts']));
-          if (($c['rev'] ?? '') !== '') $tip .= " (revision {$c['rev']})";
-        } elseif ($state === 'syncing') {
-          $tip .= "Uploading now: " . round($c['pct']) . "% of bytes present";
-        } elseif ($state === 'missing') {
-          $tip .= "Never backed up\nTarget is configured but has received nothing yet";
-        } elseif ($state === 'unknown') {
-          $tip .= "Not checked since boot";
-        } elseif ($state === 'paused') {
-          $tip .= "Cloud backup paused by policy";
-        } else {
-          $tip .= "Not configured\nThis dataset is not sent to this cloud";
-        }
-        $tip .= "\nSource: " . bo_repo_root($r['share']);
+        $tip = bo_cell_text($sk, $c)['tip'] . "\nSource: " . bo_repo_root($r['share']);
 
         $out .= "<span class='bw-mk' title='" . $h($tip) . "'>" . $m['svg'] . "</span>";
       }
@@ -226,29 +212,26 @@ if (!function_exists('bo_render_widget')) {
          stacked blocks, so reading "when was Dropbox last done" meant crossing
          between two columns and counting positions. */
       $out .= "<div class='bw-det' id='$did'>";
-      foreach (['g', 'd', 'm'] as $sk) {
+      foreach ($clouds as $sk => $cl) {
         if (!isset($r['cells'][$sk])) continue;
         $c = $r['cells'][$sk];
         $state = $c['state'] ?? 'na';
         $m = bw_mark($state, $green, $amber, $blue, $grey);
-
-        if ($state === 'na') {
-          $txt = "<span style='color:$grey'>not configured</span>";
-        } elseif ($state === 'ok') {
-          $txt = "<span style='color:$green'>" . bo_when($c['ts'])
-               . (($c['rev'] ?? '') !== '' ? " <span class='bw-rev'>rev " . $h($c['rev']) . "</span>" : '') . "</span>";
-        } elseif ($state === 'syncing') {
-          $txt = "<span style='color:$blue'>uploading " . round($c['pct']) . "%</span>";
-        } elseif ($state === 'unknown') {
-          $txt = "<span style='color:$grey'>not checked yet</span>";
-        } elseif ($state === 'paused') {
-          $txt = "<span style='color:#64748b'>paused</span>";
+        /* The tile is narrow: the short word, not the page's longer detail. A
+           backup or clone that is fine shows when it last ran, since that is
+           what you open the row to check. */
+        $tool = $c['tool'] ?? '';
+        if ($state === 'ok' && $tool === 'duplicacy') {
+          $word = bo_when($c['ts']) . (($c['rev'] ?? '') !== '' ? " <span class='bw-rev'>rev " . $h($c['rev']) . "</span>" : '');
+        } elseif ($state === 'ok' && $tool === 'clone') {
+          $word = bo_when($c['ts']) . " <span class='bw-rev'>mirror</span>";
         } else {
-          $txt = "<span style='color:$amber'>never backed up</span>";
+          $word = $h(bo_cell_text($sk, $c)['word']);
         }
+        $txt = "<span style='color:" . $m['colour'] . "'>$word</span>";
 
         $out .= "<div class='bw-detr'>"
-              . "<span class='bw-detc'>" . $h($cloudFull[$sk])
+              . "<span class='bw-detc'>" . $h($cl['full'])
               . " <span class='bw-tool'>" . $h(isset($c['tool']) ? bo_tool_label($c['tool']) : $cloudTool[$sk]) . "</span></span>"
               . "<span class='bw-dets'>" . $m['svg'] . " $txt</span>"
               . "</div>";
@@ -270,26 +253,33 @@ if (!function_exists('bo_render_widget')) {
     /* Coverage answers "is there a copy". This answers "will the next one fit",
        which is the other way the estate fails quietly - a full provider does not
        break a backup loudly, it just stops accepting new data.
-       Placed under the grid and using the same three clouds in the same order, so
-       a column reads top to bottom as one provider. */
+       Placed under the grid and using the same destinations in the same order,
+       so a column reads top to bottom as one provider. Amazon has no figure to
+       draw: Prime stores photos without limit, which is all it is sent. */
     $qt = bo_quota();
     $out .= "<div class='bw-q'>";
     $out .= "<div class='bw-ql'><span>Space left</span><span class='bw-qu'>"
           . $h($qt['updated'] !== '' ? $qt['updated'] : 'not measured') . "</span></div>";
     $out .= "<div class='bw-qg'>";
-    foreach (['g', 'd', 'm'] as $sk) {
+    foreach ($clouds as $sk => $cl) {
+      if ($sk === 'a') {
+        $out .= "<div class='bw-qc' title='Amazon Photos - unlimited full-resolution photos with Prime'>"
+              . "<div class='bw-qh'>" . bo_brand('a', 11)
+              . "<span class='bw-qf'>unlimited</span></div></div>";
+        continue;
+      }
       $x = $qt[$sk] ?? null;
       if (!$x) {
         /* No figures is said, not drawn. An empty bar here would read as a full
            provider, which is the alarm this panel exists to raise honestly. */
-        $out .= "<div class='bw-qc' title='" . $h($cloudFull[$sk]) . " - no figures from the last check'>"
+        $out .= "<div class='bw-qc' title='" . $h($cl['full']) . " - no figures from the last check'>"
               . "<div class='bw-qh'>" . bo_brand($sk, 11)
               . "<span class='bw-qf' style='color:$grey'>&#8211;</span></div>"
               . "<div class='bw-qb'></div></div>";
         continue;
       }
       $col = bo_quota_colour($x);
-      $tip = $cloudFull[$sk] . "\n"
+      $tip = $cl['full'] . "\n"
            . bo_bytes($x['free']) . " free of " . bo_bytes($x['total']) . "\n"
            . bo_bytes($x['used']) . " used";
       if ($x['other'] > 0) {

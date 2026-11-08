@@ -16,11 +16,10 @@ RCLONE_DIR=/mnt/user/appdata/rclone
 # Storage names mapped to providers.
 BW_STORAGE_G="gdrive"
 BW_STORAGE_D="dropbox"
-BW_STORAGE_M="mailru"
 
 # repo:duplicacy-storages. A cloud absent here is treated as "not a target",
 # rendered grey, and never counted as a gap.
-BW_SETS="raw-photos:gdrive,mailru videos:gdrive paperless:gdrive,mailru appdata:gdrive,mailru immich:dropbox icloud:dropbox"
+BW_SETS="paperless:gdrive,dropbox appdata:gdrive,dropbox immich:gdrive,dropbox"
 
 # Optional source-root overrides. Most datasets default to /mnt/user/<dataset>.
 BW_REPO_ROOTS="immich=/mnt/user/immich/backups"

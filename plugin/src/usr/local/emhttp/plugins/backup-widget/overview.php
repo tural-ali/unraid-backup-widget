@@ -17,7 +17,7 @@
  *   rclone-progress.ini       5m   real bytes/rate/ETA, measured against Dropbox
  *
  * Two tools, two kinds of copy, and the page keeps them distinct: Duplicacy
- * writes versioned encrypted chunks to Google Drive and mail.ru; rclone mirrors
+ * writes versioned encrypted chunks to Google Drive and Dropbox; rclone mirrors
  * plain files to Dropbox. They fail differently and restore differently, so a
  * green cell means different things and says which tool produced it.
  */
@@ -129,27 +129,62 @@ if (!function_exists('bo_tint_for')) {
 
 if (!function_exists('bo_storage_map')) {
   /* Which cloud key each Duplicacy storage name belongs to.
-     BW_STORAGE_G / _D / _M name the storages; anything else is ignored. Defaults match
+     BW_STORAGE_G / _D name the storages; anything else is ignored. Defaults match
      the layout this was written against. */
   function bo_storage_map() {
     return [
       'g' => array_filter(array_map('trim', explode(',', bo_conf('BW_STORAGE_G', 'gdrive')))),
       'd' => array_filter(array_map('trim', explode(',', bo_conf('BW_STORAGE_D', 'dropbox')))),
-      'm' => array_filter(array_map('trim', explode(',', bo_conf('BW_STORAGE_M', 'mailru')))),
     ];
+  }
+}
+
+if (!function_exists('bo_clouds')) {
+  /* Every destination column, in display order. One list, so the tile, the page
+     and the score cannot disagree about how many destinations there are.
+     'a' is Amazon Photos: a photos-only copy of one share, fed by the uploader's
+     ledger instead of Duplicacy's coverage check - see bo_amazon_cell(). */
+  function bo_clouds() {
+    return [
+      'g' => ['short' => 'Google',  'full' => 'Google Drive'],
+      'd' => ['short' => 'Dropbox', 'full' => 'Dropbox'],
+      'a' => ['short' => 'Amazon',  'full' => 'Amazon Photos'],
+    ];
+  }
+}
+
+if (!function_exists('bo_column_tools')) {
+  /* What a column header says under the provider: every tool that actually feeds
+     that column, so Google reads "Duplicacy + rclone" once the clone is in it,
+     rather than a fixed label that was true of only some rows. */
+  function bo_column_tools($rows) {
+    $out = [];
+    foreach (bo_clouds() as $sk => $_) {
+      $seen = [];
+      foreach ($rows as $r) {
+        $tool = $r['cells'][$sk]['tool'] ?? null;
+        if ($tool !== null) $seen[bo_tool_label($tool)] = true;
+      }
+      ksort($seen);   // "Duplicacy" sorts before "rclone": the versioned tool first
+      $out[$sk] = $seen ? implode(' + ', array_keys($seen)) : ($sk === 'a' ? 'photos only' : 'Duplicacy');
+    }
+    return $out;
   }
 }
 
 if (!function_exists('bo_tool_label')) {
   function bo_tool_label($tool) {
-    return strtolower((string)$tool) === 'rclone' ? 'rclone' : 'Duplicacy';
+    $t = strtolower((string)$tool);
+    if ($t === 'rclone' || $t === 'clone') return 'rclone';
+    if ($t === 'amazon') return 'photos only';
+    return 'Duplicacy';
   }
 }
 
 if (!function_exists('bo_sets')) {
   /* repo:storage,storage  parsed into [share => [storage, ...]]. */
   function bo_sets() {
-    $raw = bo_conf('BW_SETS', 'raw-photos:gdrive,mailru videos:gdrive paperless:gdrive,mailru appdata:gdrive,mailru immich:dropbox icloud:dropbox');
+    $raw = bo_conf('BW_SETS', 'paperless:gdrive,dropbox appdata:gdrive,dropbox immich:gdrive,dropbox');
     $out = [];
     if (trim($raw) === '') return $out;
     foreach (preg_split('/\s+/', trim($raw)) as $entry) {
@@ -308,11 +343,208 @@ if (!function_exists('bo_brand')) {
       case 'd':
         return "<svg width='$px' height='$px' viewBox='0 0 24 24' role='img' aria-label='Dropbox'>"
           . "<path fill='#0061ff' d='M6 1.807L0 5.629l6 3.822 6.001-3.822L6 1.807zM18 1.807l-6 3.822 6 3.822 6-3.822-6-3.822zM0 13.274l6 3.822 6.001-3.822L6 9.452l-6 3.822zM18 9.452l-6 3.822 6 3.822 6-3.822-6-3.822zM6 18.371l6.001 3.822 6-3.822-6-3.822L6 18.371z'/></svg>";
-      case 'm':
-        return "<svg width='$px' height='$px' viewBox='0 0 24 24' role='img' aria-label='mail.ru'>"
-          . "<path fill='#005ff9' d='M15.61 12a3.61 3.61 0 11-7.22 0 3.61 3.61 0 017.22 0zM12 0a12 12 0 100 24 11.94 11.94 0 008.48-3.51l-1.41-1.41A9.96 9.96 0 0112 22C6.48 22 2 17.52 2 12S6.48 2 12 2s10 4.48 10 10c0 1.38-.28 2.7-.79 3.9-.24.36-.6.6-1.02.6-.66 0-1.19-.53-1.19-1.19V12a7 7 0 10-2.05 4.95 3.39 3.39 0 002.74 1.35c1.05 0 1.98-.52 2.55-1.31A11.9 11.9 0 0024 12C24 5.37 18.63 0 12 0z'/></svg>";
+      case 'a':
+        /* Not the Amazon wordmark: a smile-and-arrow in its orange, enough to
+           tell the line apart from the three Duplicacy clouds. The glyph sits low in
+           its 24-unit box, so the viewBox starts 3.5 down to centre it on the text. */
+        return "<svg width='$px' height='$px' viewBox='0 3.5 24 24' role='img' aria-label='Amazon Photos'>"
+          . "<path d='M3.5 14.5c5.2 3.6 11.8 3.6 17 0' fill='none' stroke='#ff9900' stroke-width='2.4' stroke-linecap='round'/>"
+          . "<path d='M16.8 12.6l3.9 1.6-1.4 3.8' fill='none' stroke='#ff9900' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/></svg>";
     }
     return '';
+  }
+}
+
+if (!function_exists('bo_amazon')) {
+  /* Amazon Photos, from the uploader's own ledger via amazon-photos-status.sh.
+   *
+   * Shown as the fourth destination column since 2026-10-04, for the one share
+   * the uploader reads (ap_share). It is a photos-only copy with no versions and
+   * no restore drill, so its cell says so: the tool label is "photos only", and
+   * its words are a photo count rather than a revision. See bo_amazon_cell().
+   *
+   * One summary for the tile and the page, so the two cannot disagree. Null
+   * until the uploader has counted the archive once, so a box without it shows
+   * no Amazon column state rather than a dead "0 of 0".
+   */
+  function bo_amazon() {
+    static $memo = false;
+    if ($memo !== false) return $memo;
+    $i = bo_ini('/var/local/emhttp/amazon-photos.ini');
+    $eligible = (int)($i['ap_eligible'] ?? 0);
+    if ($eligible <= 0) return $memo = null;
+    $p = bo_pal();
+    $done     = min((int)($i['ap_done'] ?? 0), $eligible);
+    $left     = $eligible - $done;
+    $running  = ($i['ap_state'] ?? '') === 'running';
+    $exit     = (string)($i['ap_last_exit'] ?? '');
+    $end      = (int)($i['ap_last_end'] ?? 0);
+    $problems = (int)($i['ap_problems'] ?? 0);
+    /* It runs nightly; a day and a half without a finished run means the
+       schedule itself is broken, which no exit code will ever report. */
+    $overdue  = !$running && $end > 0 && time() - $end > 129600;
+    /* The login is a copy of Chrome's cookies; the nightly run sends the same
+       two-week warning to Telegram. */
+    $expires  = (int)($i['ap_login_expires'] ?? 0);
+    $days     = $expires > 0 ? (int)floor(($expires - time()) / 86400) : null;
+
+    if ($running) {
+      $colour = $p['blue'];  $note = 'uploading, ' . number_format($left) . ' to go';
+    } elseif ($exit === '2') {
+      $colour = $p['red'];   $note = 'Amazon wants a fresh login - sign in to amazon.com in Chrome on the Mac';
+    } elseif ($exit !== '' && $exit !== '0' && $exit !== '1' && $exit !== '3') {
+      $colour = $p['red'];   $note = "last run failed (exit $exit)";
+    } elseif ($days !== null && $days < 14) {
+      $colour = $p['amber']; $note = ($days < 1 ? 'Amazon login expires today' : "Amazon login expires in $days " . ($days === 1 ? 'day' : 'days'))
+                                     . ' - sign in to amazon.com in Chrome on the Mac';
+    } elseif ($overdue) {
+      $colour = $p['amber']; $note = 'no run since ' . bo_ago($end);
+    } elseif ($exit === '3') {
+      $colour = $p['amber']; $note = 'last run stopped early, ' . number_format($left) . ' to go';
+    } elseif ($left === 0) {
+      $colour = $p['green']; $note = 'all copied';
+    } else {
+      $colour = $p['amber']; $note = number_format($left) . ' waiting for the next run';
+    }
+    /* exit 1 is exactly this case: some files failed and the rest went through */
+    if ($problems > 0) $note .= ', ' . number_format($problems) . ' failed, retried nightly';
+
+    return $memo = [
+      'done' => $done, 'eligible' => $eligible, 'left' => $left, 'pct' => $done * 100 / $eligible,
+      'colour' => $colour, 'note' => $note, 'complete' => $left === 0 && $problems === 0,
+      'failing' => $colour === $p['red'], 'running' => $running, 'last' => $end,
+      'share' => (string)($i['ap_share'] ?? 'family-archive'),
+    ];
+  }
+}
+
+if (!function_exists('bo_amazon_cell')) {
+  /* The Amazon column's cell, in the same state vocabulary as the Duplicacy
+     cells so the score and the row dot treat it alike. Two states exist only
+     here: 'failing' (the uploader cannot run, e.g. Amazon rejected the login)
+     and 'behind' (it ran, but some photos are not there yet). */
+  function bo_amazon_cell($ap) {
+    if (!$ap)               return ['state' => 'unknown', 'tool' => 'amazon'];
+    $p = bo_pal();
+    if ($ap['running'])     $s = 'syncing';
+    elseif ($ap['failing']) $s = 'failing';
+    /* green only when every photo is there AND nothing else is wrong: an
+       expiring login or a missed night is amber even with all photos copied */
+    elseif ($ap['complete'] && $ap['colour'] === $p['green']) $s = 'ok';
+    else                    $s = 'behind';
+    return ['state' => $s, 'tool' => 'amazon', 'pct' => $ap['pct'], 'ts' => $ap['last'] ?: null,
+            'rev' => '', 'ap' => $ap];
+  }
+}
+
+if (!function_exists('bo_amazon_words')) {
+  /* What an Amazon cell says, for the tooltip and the expanded row: a photo
+     count and the uploader's own note, never a revision it does not have. */
+  function bo_amazon_words($c) {
+    $ap = $c['ap'] ?? null;
+    if (!$ap) return ['word' => 'not checked', 'tip' => 'The uploader has not counted the archive yet', 'detail' => 'not checked yet'];
+    $count = number_format($ap['done']) . ' of ' . number_format($ap['eligible']) . ' photos';
+    $word = ['ok' => 'all copied', 'syncing' => 'uploading ' . floor($ap['pct']) . '%', 'failing' => 'failing',
+             'behind' => $ap['left'] > 0 ? number_format($ap['left']) . ' to go' : 'needs attention'][$c['state']] ?? $ap['note'];
+    $tip = "Still images only, no videos and no versions\n" . $count . "\n" . ucfirst($ap['note'])
+         . ($ap['last'] ? "\nLast run: " . strip_tags(bo_when($ap['last'])) : '');
+    return ['word' => $word, 'tip' => $tip, 'detail' => $count . ' &#183; ' . htmlspecialchars($ap['note'], ENT_QUOTES)];
+  }
+}
+
+if (!function_exists('bo_clone')) {
+  /* The nightly Google Drive clone (family-clone.sh), via drive-clone-status.sh.
+   *
+   * A full rclone mirror of one share, in the Google column for that share. Like
+   * Amazon it has no versions and no restore drill - the versioned copy is the
+   * Duplicacy one - so its cell says "rclone" and speaks of runs, not revisions.
+   * Null when the box has no clone script.
+   */
+  function bo_clone() {
+    static $memo = false;
+    if ($memo !== false) return $memo;
+    $i = bo_ini('/var/local/emhttp/drive-clone.ini');
+    if (($i['dc_share'] ?? '') === '') return $memo = null;
+    $n = function ($k) use ($i) { return (int)($i[$k] ?? 0); };
+    return $memo = [
+      'share' => (string)$i['dc_share'], 'dest' => (string)($i['dc_dest'] ?? ''),
+      'running' => ($i['dc_state'] ?? '') === 'running',
+      'start' => $n('dc_last_start'), 'end' => $n('dc_last_end'), 'last_ok' => $n('dc_last_ok'),
+      'result' => (string)($i['dc_result'] ?? 'none'),
+      'refused_at' => $n('dc_refused_at'), 'refused' => (string)($i['dc_refused'] ?? ''),
+      'deleted' => $n('dc_deleted'), 'held' => $n('dc_held'), 'unexplained' => $n('dc_unexplained'),
+    ];
+  }
+}
+
+if (!function_exists('bo_clone_cell')) {
+  /* A nightly job, so a day and a half without a clean finish means it has
+     missed a night. A refusal newer than the last finish is a failure: the
+     clone stops itself when the archive mount looks wrong, and stays stopped. */
+  function bo_clone_cell($dc) {
+    if (!$dc) return ['state' => 'unknown', 'tool' => 'clone'];
+    $base = ['tool' => 'clone', 'dc' => $dc, 'ts' => $dc['end'] ?: null, 'rev' => ''];
+    if ($dc['running'])                       return ['state' => 'syncing'] + $base;
+    if ($dc['refused_at'] > max($dc['end'], $dc['start']))
+                                              return ['state' => 'failing', 'why' => 'refused: ' . $dc['refused']] + $base;
+    if (!$dc['end'] && !$dc['start'])         return ['state' => 'missing'] + $base;
+    if ($dc['start'] > $dc['end'])            return ['state' => 'behind', 'why' => 'the last run stopped before finishing'] + $base;
+    if (time() - $dc['last_ok'] > 36 * 3600)  return ['state' => 'behind', 'why' => 'no clean run for over a day'] + $base;
+    if ($dc['result'] === 'errors')           return ['state' => 'behind', 'why' => 'some files failed to copy last run'] + $base;
+    return ['state' => 'ok'] + $base;
+  }
+}
+
+if (!function_exists('bo_cell_text')) {
+  /* Every way a cell is put into words - short word, tooltip, expanded detail -
+     in one place for the tile and the page. The tooltip has no "Source" line;
+     callers add it. Detail is HTML. */
+  function bo_cell_text($sk, $c) {
+    $state = $c['state'] ?? 'na';
+    $m = bo_mark($state);
+    $h = function ($s) { return htmlspecialchars((string)$s, ENT_QUOTES); };
+    $head = bo_clouds()[$sk]['full'] . ' - ' . (isset($c['tool']) ? bo_tool_label($c['tool']) : 'Duplicacy');
+
+    if (($c['tool'] ?? '') === 'amazon') {
+      $w = bo_amazon_words($c);
+      return ['word' => $w['word'], 'tip' => $head . "\n" . $w['tip'], 'detail' => $w['detail']];
+    }
+
+    if (($c['tool'] ?? '') === 'clone' && !empty($c['dc'])) {
+      $dc = $c['dc'];
+      $lines = ['Mirror of the share, deletions included, no versions'];
+      if ($dc['end']) $lines[] = 'Last run finished: ' . strip_tags(bo_when($dc['end']));
+      if (!empty($c['why'])) $lines[] = ucfirst($c['why']);
+      if ($dc['held']) $lines[] = number_format($dc['held']) . ' deleted files kept on Drive while still restorable in a Bin';
+      if ($dc['unexplained']) $lines[] = number_format($dc['unexplained']) . ' absences no bin explains, kept on Drive for review';
+      $word = ['ok' => 'mirrored', 'syncing' => 'syncing now', 'failing' => 'failing', 'behind' => 'behind',
+               'missing' => 'never run'][$state] ?? $m['word'];
+      $detail = $state === 'ok' ? bo_when($dc['end']) . " <span class='bo-dim'>nightly mirror</span>"
+              : ($state === 'syncing' ? 'syncing now' : $h($c['why'] ?? $m['word']));
+      return ['word' => $word, 'tip' => $head . "\n" . implode("\n", $lines), 'detail' => $detail];
+    }
+
+    $tip = $head . "\n";
+    $word = $m['word'];
+    if ($state === 'ok') {
+      $tip .= "Last backup: " . strip_tags(bo_when($c['ts']));
+      if (($c['rev'] ?? '') !== '') $tip .= " (revision {$c['rev']})";
+      $detail = bo_when($c['ts']) . (($c['rev'] ?? '') !== '' ? " <span class='bo-dim'>revision " . $h($c['rev']) . "</span>" : '');
+    } elseif ($state === 'syncing') {
+      $word = 'uploading ' . round($c['pct']) . '%';
+      $tip .= "Uploading now: " . round($c['pct']) . "% of bytes present";
+      $detail = "uploading, " . round($c['pct']) . "% of bytes present";
+    } elseif ($state === 'missing') {
+      $tip .= "Never backed up\nTarget is configured but has received nothing yet";
+      $detail = 'never backed up';
+    } elseif ($state === 'na') {
+      $tip .= "Not configured\nThis dataset is not sent to this cloud";
+      $detail = 'not configured';
+    } else {
+      $tip .= $m['tip'];
+      $detail = $m['word'];
+    }
+    return ['word' => $word, 'tip' => $tip, 'detail' => $detail];
   }
 }
 
@@ -408,7 +640,7 @@ if (!function_exists('bo_quota')) {
     if ($q !== null) return $q;
     $i = bo_ini('/var/local/emhttp/cloud-quota.ini');
     $q = ['updated' => $i['q_updated'] ?? ''];
-    foreach (['g', 'd', 'm'] as $k) {
+    foreach (['g', 'd'] as $k) {
       $state = $i["q_{$k}_state"] ?? '';
       $total = (float)($i["q_{$k}_total"] ?? 0);
       $free  = (float)($i["q_{$k}_free"]  ?? 0);
@@ -467,6 +699,8 @@ if (!function_exists('bo_plan')) {
     foreach ($mirrored as $m) if (!in_array($m, $order, true)) $order[] = $m;
     foreach ($paused as $p) if (!in_array($p, $order, true)) $order[] = $p;
 
+    $ap = bo_amazon();
+    $dc = bo_clone();
     $plan = [];
     foreach ($order as $share) {
       if (!is_dir('/mnt/user/' . $share)) continue;   // configured but gone
@@ -474,11 +708,15 @@ if (!function_exists('bo_plan')) {
       $targets = [];
       if (!$isPaused) {
         foreach ($sets[$share] ?? [] as $storage) {
-          foreach (['g', 'd', 'm'] as $k) {
+          foreach (['g', 'd'] as $k) {
             if (in_array($storage, $map[$k], true)) $targets[$k] = 'duplicacy';
           }
         }
         if (in_array($share, $mirrored, true)) $targets['d'] = 'rclone';
+        /* The clone takes Google's cell only where Duplicacy does not already
+           use it, so a share with both keeps reporting its versioned backup. */
+        if ($dc && $dc['share'] === $share && !isset($targets['g'])) $targets['g'] = 'clone';
+        if ($ap && $ap['share'] === $share) $targets['a'] = 'amazon';
       }
       if (!$targets && !$isPaused) continue;          // nothing to report on
 
@@ -496,12 +734,14 @@ if (!function_exists('bo_plan')) {
 }
 
 if (!function_exists('bo_next_run')) {
-  /* Next scheduled job, from the two cron times that actually exist:
-     02:30 Duplicacy, 05:30 the Dropbox mirror. Hard-coded to match
-     duplicacy.cron and rclone-dropbox.cron - if those move, this must too. */
+  /* Next scheduled job. Hard-coded to match the cron fragments in
+     /boot/config/plugins/dynamix - duplicacy.cron (02:30), family-clone.cron
+     (03:10), the Immich leg (04:00) and amazon-photos.cron (05:00). If one of
+     those moves, this must too. */
   function bo_next_run() {
     $best = null; $what = '';
-    foreach ([['02:30', 'Core backups'], ['04:00', 'Immich'], ['04:30', 'iCloud']] as [$hhmm, $name]) {
+    foreach ([['02:30', 'Core backups'], ['03:10', 'Google Drive mirror'], ['04:00', 'Immich'],
+              ['05:00', 'Amazon Photos']] as [$hhmm, $name]) {
       [$h, $m] = array_map('intval', explode(':', $hhmm));
       $t = mktime($h, $m, 0);
       if ($t <= time()) $t += 86400;
@@ -539,11 +779,20 @@ if (!function_exists('bo_state')) {
 
       $isPaused = !empty($spec['paused']);
       $cells = []; $ok = 0; $n = 0; $rowNewest = null;
-      foreach (['g', 'd', 'm'] as $sk) {
+      foreach (array_keys(bo_clouds()) as $sk) {
         if ($isPaused) { $cells[$sk] = ['state' => 'paused']; continue; }
         if (!isset($spec['targets'][$sk])) { $cells[$sk] = ['state' => 'na']; continue; }
         $n++; $slots++;
         $tool = $spec['targets'][$sk];
+        /* Amazon and the Drive clone are not in Duplicacy's coverage file; their
+           state comes from their own logs. They count toward the score like any
+           other target, but not toward "last successful backup", which is about
+           versioned backups. */
+        if ($tool === 'amazon' || $tool === 'clone') {
+          $cells[$sk] = $tool === 'amazon' ? bo_amazon_cell(bo_amazon()) : bo_clone_cell(bo_clone());
+          if ($cells[$sk]['state'] === 'ok') { $ok++; $covered++; }
+          continue;
+        }
         $v = $have[$sk] ?? null;
 
         if ($v === null) {
@@ -581,7 +830,7 @@ if (!function_exists('bo_state')) {
     if ($get($live, 'status') === 'running' && $get($live, 'repo') !== '') {
       $storage = $get($live, 'storage');
       $target = 'Duplicacy storage';
-      $labels = ['g' => 'Google Drive', 'd' => 'Dropbox', 'm' => 'mail.ru'];
+      $labels = ['g' => 'Google Drive', 'd' => 'Dropbox'];
       foreach (bo_storage_map() as $cloud => $names) {
         if (in_array($storage, $names, true)) { $target = $labels[$cloud]; break; }
       }
@@ -646,6 +895,8 @@ if (!function_exists('bo_state')) {
       'cov_updated' => $get($cov, 'cov_updated', 'never'),
       'rc_used' => $get($rc, 'rc_used'), 'rc_total' => $get($rc, 'rc_total'),
       'rl_errors' => (int)$get($rl, 'rl_errors', '0'),
+      /* Amazon Photos summary; its column cells are built above. */
+      'ap' => bo_amazon(),
     ];
   }
 }
@@ -789,6 +1040,12 @@ if (!function_exists('bo_mark')) {
       case 'unknown':
         return ['svg' => "<svg width='$px' height='$px' viewBox='0 0 12 12'><circle cx='6' cy='6' r='4.3' fill='none' stroke='{$p['grey']}' stroke-width='1.4' stroke-dasharray='2 2'/></svg>",
                 'tip' => 'Not checked since boot', 'word' => 'not checked', 'colour' => $p['grey']];
+      case 'failing':
+        return ['svg' => "<svg width='$px' height='$px' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5' fill='{$p['red']}'/></svg>",
+                'tip' => 'Failing - the last run could not copy anything', 'word' => 'failing', 'colour' => $p['red']];
+      case 'behind':
+        return ['svg' => "<svg width='$px' height='$px' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5' fill='{$p['amber']}'/></svg>",
+                'tip' => 'Partly copied - some files are not there yet', 'word' => 'behind', 'colour' => $p['amber']];
       case 'paused':
         return ['svg' => "<svg width='$px' height='$px' viewBox='0 0 12 12'><circle cx='6' cy='6' r='5' fill='#64748b'/><rect x='4' y='3.3' width='1.3' height='5.4' rx='.4' fill='white'/><rect x='6.7' y='3.3' width='1.3' height='5.4' rx='.4' fill='white'/></svg>",
                 'tip' => 'Cloud backup paused by policy', 'word' => 'paused', 'colour' => '#64748b'];
@@ -811,7 +1068,7 @@ if (!function_exists('bo_row_state')) {
       $s = $c['state'] ?? 'na';
       if ($s === 'ok')      $ok++;
       if ($s === 'syncing') $half++;
-      if ($s === 'missing') $miss++;
+      if ($s === 'missing' || $s === 'failing' || $s === 'behind') $miss++;
     }
     if ($ok === $r['targets']) return 'ok';
     if ($miss > 0 && $ok === 0 && $half === 0) return 'missing';
@@ -846,10 +1103,8 @@ if (!function_exists('bo_render')) {
     $scol = $coveragePending ? $p['grey']
           : ($q['pct'] >= 90 ? $p['green'] : ($q['pct'] >= 60 ? $p['amber'] : $p['red']));
 
-    $cloudLabel = ['g' => 'Google', 'd' => 'Dropbox', 'm' => 'Mail.ru'];
-    $cloudFull  = ['g' => 'Google Drive', 'd' => 'Dropbox', 'm' => 'mail.ru'];
-    $dropboxTool = bo_mirrored() ? 'Duplicacy / rclone' : 'Duplicacy';
-    $cloudTool  = ['g' => 'Duplicacy', 'd' => $dropboxTool, 'm' => 'Duplicacy'];
+    $clouds    = bo_clouds();
+    $cloudTool = bo_column_tools($st['rows']);
 
     $out = "<div class='bo-wrap'>";
 
@@ -946,13 +1201,21 @@ if (!function_exists('bo_render')) {
           . " Provider capacity <span class='bo-dim'>"
           . ($qt['updated'] !== '' ? "measured " . $h($qt['updated']) : "not measured yet")
           . "</span></div><div class='bo-quota-g'>";
-    foreach (['g', 'd', 'm'] as $sk) {
-      $x   = $qt[$sk] ?? null;
-      $col = bo_quota_colour($x);
+    foreach ($clouds as $sk => $cl) {
       $out .= "<div class='bo-qc'>"
             . "<div class='bo-qc-h'>" . bo_brand($sk, 16)
-            . "<span class='bo-qc-n'>" . $h($cloudFull[$sk]) . "</span>"
+            . "<span class='bo-qc-n'>" . $h($cl['full']) . "</span>"
             . "<span class='bo-tool2'>" . $h($cloudTool[$sk]) . "</span></div>";
+      /* Prime stores full-resolution photos without limit, and photos are all
+         the uploader sends, so there is no fullness to draw. */
+      if ($sk === 'a') {
+        $out .= "<div class='bo-qc-v'><b style='color:{$p['green']}'>Unlimited</b> photos</div>"
+              . "<div class='bo-qc-bar' style='visibility:hidden'></div>"
+              . "<div class='bo-qc-s'>Full resolution with Prime. Videos are not sent.</div></div>";
+        continue;
+      }
+      $x   = $qt[$sk] ?? null;
+      $col = bo_quota_colour($x);
       if (!$x) {
         /* Absent figures are stated. Drawing an empty bar would read as a full
            provider and send the operator chasing a problem that is not there. */
@@ -1007,10 +1270,10 @@ if (!function_exists('bo_render')) {
     /* ---- datasets ---- */
     $out .= "<div class='bo-table-scroll'><div class='bo-table'>";
     $out .= "<div class='bo-tr bo-th'><div>Dataset</div>";
-    foreach (['g', 'd', 'm'] as $sk) {
+    foreach ($clouds as $sk => $cl) {
       $out .= "<div><span class='bo-hcol'>" . bo_brand($sk, 15)
-            . "<span>" . $cloudLabel[$sk] . "</span></span>"
-            . "<span class='bo-tool2'>" . $cloudTool[$sk] . "</span></div>";
+            . "<span>" . $h($cl['short']) . "</span></span>"
+            . "<span class='bo-tool2'>" . $h($cloudTool[$sk]) . "</span></div>";
     }
     $out .= "<div><span class='bo-hcol'><span>History</span></span>"
           . "<span class='bo-tool2'>last 5 checks</span></div>"
@@ -1030,29 +1293,16 @@ if (!function_exists('bo_render')) {
             . (!empty($r['paused']) ? " <span class='bo-pause'>Paused</span>" : "") . "</b>"
             . "<span class='bo-dssz'>" . bo_bytes($r['bytes']) . "</span></span></div>";
 
-      foreach (['g', 'd', 'm'] as $sk) {
+      foreach ($clouds as $sk => $cl) {
         $c = $r['cells'][$sk];
         $state = $c['state'] ?? 'na';
         $m = bo_mark($state, 13);
 
         /* State in words, not a timestamp. The exact time only matters when
            something is wrong, and then it is one click or one hover away. */
-        $word = $m['word'];
-        if ($state === 'syncing') $word = 'uploading ' . round($c['pct']) . '%';
-
-        $cellTool = isset($c['tool']) ? bo_tool_label($c['tool']) : $cloudTool[$sk];
-        $tip = $cloudFull[$sk] . " - " . $cellTool . "\n";
-        if ($state === 'ok') {
-          $tip .= "Last backup: " . strip_tags(bo_when($c['ts']));
-          if (($c['rev'] ?? '') !== '') $tip .= " (revision {$c['rev']})";
-        } elseif ($state === 'syncing') {
-          $tip .= "Uploading now: " . round($c['pct']) . "% of bytes present";
-        } elseif ($state === 'missing') {
-          $tip .= "Never backed up\nTarget is configured but has received nothing yet";
-        } else {
-          $tip .= $m['tip'];
-        }
-        $tip .= "\nSource: " . bo_repo_root($r['share']);
+        $txt  = bo_cell_text($sk, $c);
+        $word = $txt['word'];
+        $tip  = $txt['tip'] . "\nSource: " . bo_repo_root($r['share']);
 
         $out .= "<div class='bo-cell' title='" . $h($tip) . "'>" . $m['svg']
               . " <span style='color:" . $m['colour'] . "'>" . $h($word) . "</span></div>";
@@ -1066,24 +1316,15 @@ if (!function_exists('bo_render')) {
 
       /* expansion: the per-cloud story, same shape as the tile */
       $out .= "<div class='bo-det' id='$did'>";
-      foreach (['g', 'd', 'm'] as $sk) {
+      foreach ($clouds as $sk => $cl) {
         if (!isset($r['cells'][$sk])) continue;
         $c = $r['cells'][$sk];
         $state = $c['state'] ?? 'na';
         $m = bo_mark($state, 12);
-
-        if ($state === 'ok') {
-          $detail = bo_when($c['ts']) . (($c['rev'] ?? '') !== '' ? " <span class='bo-dim'>revision {$c['rev']}</span>" : '');
-        } elseif ($state === 'syncing') {
-          $detail = "uploading, " . round($c['pct']) . "% of bytes present";
-        } elseif ($state === 'missing') {
-          $detail = "never backed up";
-        } else {
-          $detail = $m['word'];
-        }
+        $detail = bo_cell_text($sk, $c)['detail'];
 
         $out .= "<div class='bo-detr'>"
-              . "<span class='bo-detc'>" . $m['svg'] . " " . $h($cloudFull[$sk])
+              . "<span class='bo-detc'>" . $m['svg'] . " " . $h($cl['full'])
               . " <span class='bo-dim'>" . $h(isset($c['tool']) ? bo_tool_label($c['tool']) : $cloudTool[$sk]) . "</span></span>"
               . "<span class='bo-dets' style='color:" . $m['colour'] . "'>" . $detail . "</span></div>";
       }
@@ -1107,7 +1348,7 @@ if (!function_exists('bo_render')) {
       if ($g['tool'] === 'rclone') {
         $cmd = bo_conf('BW_SYNC_CMD', '');
       } else {
-        $fallback = ['g' => 'gdrive', 'd' => 'dropbox', 'm' => 'mailru'];
+        $fallback = ['g' => 'gdrive', 'd' => 'dropbox'];
         $storage = $map[$g['cloud']][0] ?? $fallback[$g['cloud']];
         $cmd = 'cd ' . escapeshellarg(bo_repo_root($g['share']))
              . ' && ' . escapeshellarg(bo_dup_dir() . '/bin/duplicacy')
@@ -1115,7 +1356,7 @@ if (!function_exists('bo_render')) {
       }
       $tasks[] = [
         'title' => $g['title'] ?? $g['share'],
-        'what'  => "No copy on " . $cloudFull[$g['cloud']],
+        'what'  => "No copy on " . $clouds[$g['cloud']]['full'],
         'why'   => "The target is configured. Nothing has been uploaded to it yet.",
         'cmd'   => $cmd,
       ];
@@ -1130,10 +1371,35 @@ if (!function_exists('bo_render')) {
         ];
       }
     }
+    /* A copy that is failing or behind is named with its reason. The score
+       already counts it; this says what to do about it. */
+    foreach ($st['rows'] as $r) {
+      foreach ($r['cells'] as $sk => $c) {
+        $s = $c['state'] ?? 'na';
+        if ($s !== 'failing' && $s !== 'behind') continue;
+        $why = ($c['tool'] ?? '') === 'amazon' ? ($c['ap']['note'] ?? '') : ($c['why'] ?? '');
+        $tasks[] = [
+          'title' => $h($r['title']),
+          'what'  => ($s === 'failing' ? 'Failing on ' : 'Behind on ') . $h($clouds[$sk]['full']),
+          'why'   => $h(ucfirst($why)),
+          'cmd'   => '',
+        ];
+      }
+    }
+    if (($dc = bo_clone()) && $dc['unexplained'] > 0) {
+      $n = $dc['unexplained'];
+      $tasks[] = [
+        'title' => 'Google Drive clone',
+        'what'  => number_format($n) . " deleted file" . ($n > 1 ? 's' : '') . " kept on Drive",
+        'why'   => "Gone from " . $h($dc['share']) . " but in no cull bin, so the clone left "
+                 . ($n > 1 ? 'them' : 'it') . " on Drive. This lists them; if the deletions were yours, run it again with approve instead of status.",
+        'cmd'   => escapeshellarg(bo_rclone_dir() . '/family-clone.sh') . ' status',
+      ];
+    }
     /* A provider nearly full belongs in the attention list, not only in a bar.
        Under 15% free the next large dataset may not fit, and the failure arrives
        as a backup that silently did not happen. */
-    foreach (['g' => 'Google Drive', 'd' => 'Dropbox', 'm' => 'mail.ru'] as $sk => $name) {
+    foreach (['g' => 'Google Drive', 'd' => 'Dropbox'] as $sk => $name) {
       $x = bo_quota()[$sk] ?? null;
       if (!$x || $x['total'] <= 0) continue;
       $frac = $x['free'] / $x['total'];

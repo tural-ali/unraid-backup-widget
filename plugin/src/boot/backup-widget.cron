@@ -18,3 +18,17 @@
 # fast enough to warrant more. Offset from the 6-hourly tier so a quota check never
 # lands in the same minute as a coverage pass competing for the same providers.
 17 * * * * bash /boot/config/plugins/backup-widget/scripts/cloud-quota.sh >/dev/null 2>&1
+# Amazon Photos: reads the uploader's local ledger and status file only, never
+# Amazon itself, so the 1m tier is cheap enough.
+* * * * * bash /boot/config/plugins/backup-widget/scripts/amazon-photos-status.sh >/dev/null 2>&1
+# Google Drive clone: reads family-clone.sh's own log and state files, never
+# Drive. The log is several MB, so the 5m tier rather than every minute.
+*/5 * * * * bash /boot/config/plugins/backup-widget/scripts/drive-clone-status.sh >/dev/null 2>&1
+# After a reboot /var/local/emhttp is empty, so the 1h and 6h tiers above would
+# leave the widget blank ("coverage check pending", no space left) for up to six
+# hours. Once the array is mounted, run each of them once per boot. The marker in
+# /var/run (RAM, cleared by the reboot) makes it one attempt, not a retry loop:
+# a coverage pass that fails must not hammer mail.ru every minute.
+* * * * * [ -e /var/run/backup-widget-warm-coverage ] || ! mountpoint -q /mnt/user || { touch /var/run/backup-widget-warm-coverage; bash /boot/config/plugins/backup-widget/scripts/duplicacy-coverage.sh; } >/dev/null 2>&1
+* * * * * [ -e /var/run/backup-widget-warm-inventory ] || ! mountpoint -q /mnt/user || { touch /var/run/backup-widget-warm-inventory; bash /boot/config/plugins/backup-widget/scripts/backup-inventory.sh; } >/dev/null 2>&1
+* * * * * [ -e /var/run/backup-widget-warm-quota ] || ! mountpoint -q /mnt/user || { touch /var/run/backup-widget-warm-quota; bash /boot/config/plugins/backup-widget/scripts/cloud-quota.sh; } >/dev/null 2>&1

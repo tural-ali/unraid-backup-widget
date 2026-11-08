@@ -14,7 +14,7 @@ effect until the next boot. Change both, or reinstall the `.plg`.
 
 ## Development loop
 
-Edit under `plugin/src/`, then:
+Edit under `plugin/src/` (install and remove steps live in the `.plg` itself), then:
 
 ```bash
 ./tools/build-plg.sh

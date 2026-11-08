@@ -22,6 +22,7 @@ set -u
 # this file is both parse_ini_file-able and source-able - one file, no second
 # parser to drift. Absent config falls back to the defaults below.
 CONF=/boot/config/plugins/backup-widget/config
+# shellcheck source=/dev/null
 [ -f "$CONF" ] && . "$CONF"
 : "${DUP_DIR:=/mnt/user/appdata/duplicacy}"
 : "${RCLONE_DIR:=/mnt/user/appdata/rclone}"

@@ -17,6 +17,7 @@ flock -n 9 || exit 0
 # this file is both parse_ini_file-able and source-able - one file, no second
 # parser to drift. Absent config falls back to the defaults below.
 CONF=/boot/config/plugins/backup-widget/config
+# shellcheck source=/dev/null
 [ -f "$CONF" ] && . "$CONF"
 : "${DUP_DIR:=/mnt/user/appdata/duplicacy}"
 : "${RCLONE_DIR:=/mnt/user/appdata/rclone}"
@@ -39,8 +40,11 @@ total=0
 for s in $SHARES; do
   d="/mnt/user/$s"
   [ -d "$d" ] || continue
-  bytes=$(du -sb "$d" 2>/dev/null | cut -f1)
-  files=$(find "$d" -type f ! -name '.*' 2>/dev/null | wc -l)
+  # -D / -H follow the share path itself but no links inside it: /mnt/user/appdata
+  # is a symlink to /mnt/cache/appdata since 2026-09-14, and measuring the link
+  # reported appdata as 42 bytes and 0 files.
+  bytes=$(du -sbD "$d" 2>/dev/null | cut -f1)
+  files=$(find -H "$d" -type f ! -name '.*' 2>/dev/null | wc -l)
   key=$(echo "$s" | tr -- '-' '_')
   echo "inv_${key}_bytes=\"${bytes:-0}\"" >> "$TMP"
   echo "inv_${key}_files=\"${files:-0}\"" >> "$TMP"
