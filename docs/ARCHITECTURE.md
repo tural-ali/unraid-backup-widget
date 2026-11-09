@@ -106,8 +106,8 @@ will this finish" are both properties of the current run.
 
 ## Two valid Dropbox modes
 
-Duplicacy Dropbox repositories are checked with `duplicacy list`, exactly like Google Drive
-and Mail.ru. Optional rclone mirrors have no snapshots, so their coverage is
+Duplicacy Dropbox repositories are checked with `duplicacy list`, exactly like Google
+Drive. Optional rclone mirrors have no snapshots, so their coverage is
 measured by comparing remote bytes against local bytes, using the **same filters the sync
 applies**. Without matching filters an excluded `.DS_Store` makes a complete mirror read as
 99.9% and never green.

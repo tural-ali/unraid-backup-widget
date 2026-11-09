@@ -19,7 +19,6 @@ optional and are tracked separately because they fail and restore differently.
 |---|---|---|---|
 | Google Drive | Duplicacy | Chunked, encrypted, versioned | A committed snapshot exists |
 | Dropbox | Duplicacy or rclone `sync` | Versioned repository or plain mirror | A snapshot exists, or mirror bytes are present |
-| mail.ru | Duplicacy | Chunked, encrypted, versioned | A committed snapshot exists |
 
 A dataset that is deliberately not sent to a cloud shows a grey ring, never a warning.
 Treating a decision as a failure is how people learn to ignore warnings.
