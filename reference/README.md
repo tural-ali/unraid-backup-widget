@@ -2,7 +2,7 @@
 
 **Not part of the plugin.**
 These are the Duplicacy and rclone jobs the widget reports on, copied from the author's server so the reporting logic can be read alongside the thing it reports on.
-Last synced 2026-11-09.
+Last synced 2026-11-12.
 
 | File | Schedule | What it is |
 |---|---|---|
