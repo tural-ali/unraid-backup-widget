@@ -40,8 +40,11 @@ scrutiny|/mnt/user/appdata/scrutiny/config/scrutiny.db
 #     after proving it is the real one: root-owned, not writable by anyone
 #     else, holding a root-owned marker only root can have put there. Created
 #     by hand: install -m 0600 -o root -g root /dev/null $BASE/$ANCHOR
-#   - The database owner writes its copy into a root-owned 1733 work
-#     directory, which root then closes (0700) before looking inside.
+#   - Each copy is written inside a root-owned work directory, into an
+#     output directory that belongs to the database owner and is 0700, so no
+#     other account can list it, read the copy or plant a link for the owner's
+#     sqlite3 to follow. Afterwards root takes the output directory back
+#     (root:root 0700) before looking inside.
 #   - Root keeps a copy only if it is a single-link regular file owned by that
 #     database owner, copies it to a root-only file first and checks that copy
 #     with immutable=1, so SQLite never opens a -wal, -shm or -journal there.
@@ -79,20 +82,27 @@ while IFS='|' read -r name src; do
   if ! work=$(mktemp -d -p . .live-db-work.XXXXXX); then
     echo "db-snapshots: $name: cannot create work directory"; work=; rc=1; continue
   fi
-  # Others may create entries but not list them or remove anyone else's.
-  chmod 1733 "$work"
-  tmp="$work/$name.db"
+  # BASE is world-readable, so others can see this name. The work directory
+  # stays root-owned; others may only pass through it (0711, and only when the
+  # owner is not root) into out/, which is the owner's and 0700. SQLite needs
+  # to create a journal next to the copy, so out/ must be writable by the owner.
+  out="$work/out"
+  if ! { mkdir -m 0700 -- "$out" && chown "$uid:$gid" -- "$out"; }; then
+    echo "db-snapshots: $name: cannot create output directory"; rc=1; continue
+  fi
+  [ "$uid" = 0 ] || chmod 0711 "$work"
+  tmp="$out/$name.db"
   # the path is ours, not user input, but keep quotes out of the SQL anyway
   case "$tmp" in *\'*) echo "db-snapshots: $name: bad path"; rc=1; continue;; esac
-  # Runs as the database's owner, with this directory as its working
-  # directory, so the relative output path never leaves it.
-  if ! setpriv --reuid="$uid" --regid="$gid" --clear-groups \
-       sqlite3 -bail "file:$src?mode=ro" ".timeout 60000" "VACUUM INTO '$tmp'"; then
+  if ! ( umask 077
+         setpriv --reuid="$uid" --regid="$gid" --clear-groups \
+           sqlite3 -bail "file:$src?mode=ro" ".timeout 60000" "VACUUM INTO '$tmp'" ); then
     echo "db-snapshots: $name: VACUUM INTO failed"; rc=1; continue
   fi
-  # Root owns the directory, so once it is 0700 nobody else can add, remove or
-  # rename what is inside, and the checks below hold.
-  chmod 0700 "$work"
+  # Take out/ back first: a process of the owner's uid that is already inside
+  # it could otherwise still add, remove or rename entries. Once it is
+  # root:root 0700 nobody else can, and the checks below hold.
+  chown root:root -- "$out"; chmod 0700 -- "$out" "$work"
   if [ ! -f "$tmp" ] || [ -L "$tmp" ] ||
      [ "$(stat -c '%u %h' -- "$tmp")" != "$uid 1" ]; then
     echo "db-snapshots: $name: output is not a single-link regular file owned by uid $uid"; rc=1; continue
